@@ -125,7 +125,10 @@ else
 fi
 
 mkdir -p "$BIN" "$APPS" "$ICONS"
-install -m 0755 "$BINARY" "$BIN/niruamp"
+# Replace the executable with an atomic rename so an already-running instance
+# keeps its old inode and never reads a truncated binary.
+install -m 0755 "$BINARY" "$BIN/.niruamp.new.$$"
+mv -f "$BIN/.niruamp.new.$$" "$BIN/niruamp"
 install -m 0644 "$ROOT/assets/niruamp.svg" "$ICONS/niruamp.svg"
 sed "s|^Exec=niruamp$|Exec=$BIN/niruamp|" "$ROOT/assets/niruamp.desktop" > "$APPS/niruamp.desktop"
 chmod 0755 "$APPS/niruamp.desktop"
