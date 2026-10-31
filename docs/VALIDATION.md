@@ -1,7 +1,7 @@
 # NIRUAMP validation report
 
 Date: 2026-10-31
-Frontend: NIRUAMP 0.1.0 (Rust, `eframe`/`egui` 0.29.1, Glow)
+Frontend: NIRUAMP 0.1.0, commit `8b9d9aa` (Rust, `eframe`/`egui` 0.29.1, Glow)
 Backend: NPLAY 1.7.0, control protocol 1
 Target: NIRUX / X11 and non-NIRUX Linux desktops
 
