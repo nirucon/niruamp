@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=NIRUAMP
+GenericName=Music Player
+Comment=Winamp-inspired graphical frontend for NPLAY on NIRUX
+Exec=niruamp
+Icon=niruamp
+Terminal=false
+Categories=Audio;AudioVideo;Player;
+Keywords=music;audio;player;nplay;winamp;
+StartupNotify=true

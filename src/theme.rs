@@ -1,0 +1,1045 @@
+//! NIRUX appearance resolution with a standalone NIRUAMP fallback.
+//!
+//! The precedence intentionally follows NIRUX: a custom user theme file wins;
+//! otherwise a compiled-in builtin theme owns the base palette and the versioned
+//! appearance contract can override semantic colours. Invalid appearance data
+//! is ignored, while a malformed custom theme is reported without replacing the
+//! working appearance.
+use crate::config::config_home;
+use egui::Color32;
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
+
+use crate::config::Preferences;
+
+const BUILTINS: &[BuiltinTheme] = &[
+    BuiltinTheme {
+        name: "niru-noir",
+        label: "Niru Noir",
+        background: "0f0f10",
+        foreground: "e5e5e5",
+        muted: "a8a8a8",
+        border: "2a2a2d",
+        focus: "5a5a60",
+    },
+    BuiltinTheme {
+        name: "niru-nord",
+        label: "Niru Nord",
+        background: "2e3440",
+        foreground: "eceff4",
+        muted: "9aa5b1",
+        border: "3b4252",
+        focus: "88c0d0",
+    },
+    BuiltinTheme {
+        name: "niru-satie",
+        label: "Niru Satie",
+        background: "141414",
+        foreground: "dedad4",
+        muted: "8f8b86",
+        border: "2a2724",
+        focus: "b08d7d",
+    },
+    BuiltinTheme {
+        name: "niru-carl-larsson",
+        label: "Niru Carl Larsson",
+        background: "f3ece0",
+        foreground: "3b3228",
+        muted: "7d6f5f",
+        border: "d8cdbb",
+        focus: "a63d2f",
+    },
+    BuiltinTheme {
+        name: "niru-forest-vigil",
+        label: "Niru Forest Vigil",
+        background: "0b100c",
+        foreground: "d8ded2",
+        muted: "96a292",
+        border: "2b362c",
+        focus: "8aa87e",
+    },
+    BuiltinTheme {
+        name: "niru-blood-of-urdr",
+        label: "Niru Blood of Urdr",
+        background: "120808",
+        foreground: "e8d6cf",
+        muted: "b09a92",
+        border: "3a1d1b",
+        focus: "c96050",
+    },
+    BuiltinTheme {
+        name: "niru-root-and-stone",
+        label: "Niru Root and Stone",
+        background: "17100b",
+        foreground: "eadfd2",
+        muted: "b5a08c",
+        border: "3a2a1e",
+        focus: "c19768",
+    },
+    BuiltinTheme {
+        name: "niru-blue-horizon",
+        label: "Niru Blue Horizon",
+        background: "0b1821",
+        foreground: "dce6eb",
+        muted: "93a6b2",
+        border: "243846",
+        focus: "86aec8",
+    },
+    BuiltinTheme {
+        name: "niru-the-norns",
+        label: "Niru The Norns",
+        background: "111110",
+        foreground: "ece9e4",
+        muted: "a6a19b",
+        border: "3b3936",
+        focus: "c9c2b9",
+    },
+    BuiltinTheme {
+        name: "niru-winter-nights",
+        label: "Niru Winter Nights",
+        background: "1f232b",
+        foreground: "ead9c3",
+        muted: "b9aa9a",
+        border: "4e5157",
+        focus: "d8c4aa",
+    },
+];
+
+struct BuiltinTheme {
+    name: &'static str,
+    label: &'static str,
+    background: &'static str,
+    foreground: &'static str,
+    muted: &'static str,
+    border: &'static str,
+    focus: &'static str,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    pub background: Color32,
+    pub surface: Color32,
+    pub surface_hi: Color32,
+    pub panel: Color32,
+    pub inset: Color32,
+    pub foreground: Color32,
+    pub muted: Color32,
+    pub border: Color32,
+    pub border_hi: Color32,
+    pub focus: Color32,
+    pub accent: Color32,
+    pub selected: Color32,
+    pub success: Color32,
+    pub warning: Color32,
+    pub error: Color32,
+    pub disabled: Color32,
+    pub led: Color32,
+    pub led_dim: Color32,
+    pub vis: Color32,
+    pub vis_peak: Color32,
+    pub shadow: Color32,
+    pub light: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Appearance {
+    pub font_size: f32,
+    pub font_path: Option<PathBuf>,
+    pub gap: f32,
+    pub padding: f32,
+    pub margin: f32,
+    pub focus_width: f32,
+    pub reduced_motion: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            font_size: 15.0,
+            font_path: None,
+            gap: 8.0,
+            padding: 12.0,
+            margin: 16.0,
+            focus_width: 2.0,
+            reduced_motion: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ResolvedTheme {
+    pub palette: Palette,
+    pub appearance: Appearance,
+    pub name: String,
+    pub label: String,
+    pub source: String,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ThemeFile {
+    #[serde(default)]
+    name: Option<String>,
+    background: String,
+    foreground: String,
+    muted: String,
+    border: String,
+    focus: String,
+}
+
+fn niruwm_dir() -> PathBuf {
+    config_home().join("niruwm")
+}
+
+fn builtin(name: &str) -> Option<&'static BuiltinTheme> {
+    BUILTINS.iter().find(|t| t.name == name)
+}
+
+fn parse_hex(value: &str) -> Option<Color32> {
+    let s = value.trim().trim_start_matches('#');
+    if s.len() != 6 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let n = u32::from_str_radix(s, 16).ok()?;
+    Some(Color32::from_rgb(
+        ((n >> 16) & 0xff) as u8,
+        ((n >> 8) & 0xff) as u8,
+        (n & 0xff) as u8,
+    ))
+}
+
+fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let f = |x: u8, y: u8| {
+        (x as f32 + (y as f32 - x as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color32::from_rgb(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()))
+}
+
+fn lighten(c: Color32, t: f32) -> Color32 {
+    blend(c, Color32::WHITE, t)
+}
+
+fn darken(c: Color32, t: f32) -> Color32 {
+    blend(c, Color32::BLACK, t)
+}
+
+fn luminance(c: Color32) -> f32 {
+    (0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32) / 255.0
+}
+
+fn build_palette(
+    background: Color32,
+    foreground: Color32,
+    muted: Color32,
+    border: Color32,
+    focus: Color32,
+) -> Palette {
+    let light = luminance(background) > 0.55;
+    let surface = if light {
+        blend(background, foreground, 0.055)
+    } else {
+        blend(background, foreground, 0.065)
+    };
+    let surface_hi = blend(background, foreground, if light { 0.11 } else { 0.13 });
+    let panel = if light {
+        blend(background, Color32::WHITE, 0.22)
+    } else {
+        blend(background, Color32::BLACK, 0.16)
+    };
+    let inset = if light {
+        darken(background, 0.045)
+    } else {
+        darken(background, 0.30)
+    };
+    let accent = focus;
+    let led = if light {
+        darken(focus, 0.18)
+    } else {
+        lighten(focus, 0.30)
+    };
+    let vis = focus;
+    let vis_peak = if light {
+        darken(focus, 0.25)
+    } else {
+        lighten(focus, 0.55)
+    };
+    Palette {
+        background,
+        surface,
+        surface_hi,
+        panel,
+        inset,
+        foreground,
+        muted,
+        border,
+        border_hi: blend(border, foreground, 0.24),
+        focus,
+        accent,
+        selected: blend(surface, focus, if light { 0.18 } else { 0.26 }),
+        success: if light {
+            Color32::from_rgb(47, 111, 65)
+        } else {
+            Color32::from_rgb(143, 191, 127)
+        },
+        warning: if light {
+            Color32::from_rgb(140, 92, 26)
+        } else {
+            Color32::from_rgb(215, 179, 106)
+        },
+        error: if light {
+            Color32::from_rgb(155, 55, 55)
+        } else {
+            Color32::from_rgb(215, 122, 122)
+        },
+        disabled: blend(muted, background, 0.55),
+        led,
+        led_dim: blend(led, surface, 0.80),
+        vis,
+        vis_peak,
+        shadow: blend(background, Color32::BLACK, if light { 0.35 } else { 0.55 }),
+        light,
+    }
+}
+
+fn classic_palette() -> Palette {
+    build_palette(
+        Color32::from_rgb(26, 28, 29),
+        Color32::from_rgb(231, 225, 211),
+        Color32::from_rgb(162, 155, 141),
+        Color32::from_rgb(54, 56, 57),
+        Color32::from_rgb(214, 168, 95),
+    )
+}
+
+#[derive(Debug, Default)]
+struct AppearanceFile {
+    colors: BTreeMap<String, Color32>,
+    font_size: Option<f32>,
+    font_path: Option<PathBuf>,
+    gap: Option<f32>,
+    padding: Option<f32>,
+    margin: Option<f32>,
+    focus_width: Option<f32>,
+    reduced_motion: Option<bool>,
+    warnings: Vec<String>,
+}
+
+fn read_appearance() -> AppearanceFile {
+    let mut out = AppearanceFile::default();
+    let path = niruwm_dir().join("appearance.toml");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
+        Err(e) => {
+            out.warnings
+                .push(format!("appearance.toml unreadable: {e}"));
+            return out;
+        }
+    };
+    let value: toml::Value = match text.parse() {
+        Ok(v) => v,
+        Err(e) => {
+            out.warnings.push(format!("appearance.toml ignored: {e}"));
+            return out;
+        }
+    };
+    if value.get("schema").and_then(toml::Value::as_integer) != Some(1) {
+        out.warnings
+            .push("appearance.toml ignored: unsupported schema".into());
+        return out;
+    }
+    if let Some(colors) = value.get("colors").and_then(toml::Value::as_table) {
+        for (key, raw) in colors {
+            let text = raw.as_str().unwrap_or("");
+            match parse_hex(text) {
+                Some(color) => {
+                    out.colors.insert(key.clone(), color);
+                }
+                None => out
+                    .warnings
+                    .push(format!("appearance colour {key} is invalid")),
+            }
+        }
+    }
+    if let Some(font) = value.get("font") {
+        if let Some(size) = font.get("size").and_then(toml::Value::as_float) {
+            if size.is_finite() && (8.0..=48.0).contains(&size) {
+                out.font_size = Some(size as f32);
+            } else {
+                out.warnings
+                    .push("appearance font.size is out of range".into());
+            }
+        }
+        if let Some(path) = font.get("path").and_then(toml::Value::as_str) {
+            let p = PathBuf::from(path);
+            if p.is_file() {
+                out.font_path = Some(p);
+            } else {
+                out.warnings
+                    .push(format!("appearance font not found: {path}"));
+            }
+        }
+    }
+    if let Some(spacing) = value.get("spacing") {
+        for (key, slot) in [
+            ("gap", &mut out.gap),
+            ("padding", &mut out.padding),
+            ("margin", &mut out.margin),
+        ] {
+            if let Some(n) = spacing.get(key).and_then(toml::Value::as_integer) {
+                *slot = Some((n as f32).clamp(0.0, 64.0));
+            }
+        }
+    }
+    if let Some(width) = value
+        .get("focus")
+        .and_then(|f| f.get("width"))
+        .and_then(toml::Value::as_integer)
+    {
+        out.focus_width = Some((width as f32).clamp(1.0, 6.0));
+    }
+    if let Some(reduced) = value
+        .get("motion")
+        .and_then(|m| m.get("reduced"))
+        .and_then(toml::Value::as_bool)
+    {
+        out.reduced_motion = Some(reduced);
+    }
+    out
+}
+
+fn theme_name_from_config() -> Result<Option<String>, String> {
+    let path = niruwm_dir().join("config.toml");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("NIRUX config unreadable: {e}")),
+    };
+    let value: toml::Value = text
+        .parse()
+        .map_err(|e| format!("NIRUX config ignored: {e}"))?;
+    Ok(value
+        .get("theme")
+        .and_then(toml::Value::as_str)
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty()))
+}
+
+fn custom_theme_path(name: &str) -> PathBuf {
+    niruwm_dir().join("themes").join(format!("{name}.toml"))
+}
+
+fn read_theme(name: &str) -> Result<(Palette, String, String, bool), String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("invalid theme name".into());
+    }
+    let custom = custom_theme_path(name);
+    if custom.exists() {
+        let text = fs::read_to_string(&custom)
+            .map_err(|e| format!("theme {} unreadable: {e}", custom.display()))?;
+        let file: ThemeFile = toml::from_str(&text)
+            .map_err(|e| format!("theme {} invalid: {e}", custom.display()))?;
+        let palette = build_palette(
+            parse_hex(&file.background).ok_or_else(|| "invalid background".to_string())?,
+            parse_hex(&file.foreground).ok_or_else(|| "invalid foreground".to_string())?,
+            parse_hex(&file.muted).ok_or_else(|| "invalid muted".to_string())?,
+            parse_hex(&file.border).ok_or_else(|| "invalid border".to_string())?,
+            parse_hex(&file.focus).ok_or_else(|| "invalid focus".to_string())?,
+        );
+        let label = file.name.unwrap_or_else(|| name.to_string());
+        return Ok((palette, name.to_string(), label, true));
+    }
+    let b = builtin(name).ok_or_else(|| format!("theme {name} is not installed"))?;
+    let palette = build_palette(
+        parse_hex(b.background).expect("builtin background"),
+        parse_hex(b.foreground).expect("builtin foreground"),
+        parse_hex(b.muted).expect("builtin muted"),
+        parse_hex(b.border).expect("builtin border"),
+        parse_hex(b.focus).expect("builtin focus"),
+    );
+    Ok((palette, name.to_string(), b.label.to_string(), false))
+}
+
+pub fn resolve(prefs: &Preferences) -> Result<ResolvedTheme, String> {
+    let mode = prefs.theme.trim();
+    let appearance = read_appearance();
+    let mut warnings = appearance.warnings.clone();
+    let (mut palette, name, label, custom) = if mode == "classic" {
+        (
+            classic_palette(),
+            "classic".to_string(),
+            "NIRUAMP Classic".to_string(),
+            false,
+        )
+    } else if mode != "auto" {
+        read_theme(mode).map_err(|e| format!("{e}; keeping the previous appearance"))?
+    } else {
+        match theme_name_from_config()? {
+            Some(name) => {
+                read_theme(&name).map_err(|e| format!("{e}; keeping the previous appearance"))?
+            }
+            None => (
+                classic_palette(),
+                "classic".to_string(),
+                "NIRUAMP Classic".to_string(),
+                false,
+            ),
+        }
+    };
+    // NIRUX lets a user theme file take precedence over appearance colour
+    // overrides. Extended semantic roles are honoured when no custom file wins.
+    if mode == "auto" && !custom {
+        for (key, color) in &appearance.colors {
+            match key.as_str() {
+                "background" => palette.background = *color,
+                "surface" => palette.surface = *color,
+                "foreground" => palette.foreground = *color,
+                "muted" => palette.muted = *color,
+                "border" => palette.border = *color,
+                "focus" => palette.focus = *color,
+                "accent" => palette.accent = *color,
+                "selected" => palette.selected = *color,
+                "success" => palette.success = *color,
+                "warning" => palette.warning = *color,
+                "error" => palette.error = *color,
+                "disabled" => palette.disabled = *color,
+                _ => warnings.push(format!("appearance role {key} is not used")),
+            }
+        }
+        if !appearance.colors.is_empty() {
+            palette.surface_hi = blend(
+                palette.background,
+                palette.foreground,
+                if palette.light { 0.11 } else { 0.13 },
+            );
+            palette.panel = if palette.light {
+                blend(palette.background, Color32::WHITE, 0.22)
+            } else {
+                blend(palette.background, Color32::BLACK, 0.16)
+            };
+            palette.inset = if palette.light {
+                darken(palette.background, 0.045)
+            } else {
+                darken(palette.background, 0.30)
+            };
+            palette.border_hi = blend(palette.border, palette.foreground, 0.24);
+            palette.led_dim = blend(palette.led, palette.surface, 0.80);
+            palette.shadow = blend(
+                palette.background,
+                Color32::BLACK,
+                if palette.light { 0.35 } else { 0.55 },
+            );
+        }
+    }
+    let appearance = Appearance {
+        font_size: appearance.font_size.unwrap_or(15.0),
+        font_path: appearance.font_path,
+        gap: appearance.gap.unwrap_or(8.0),
+        padding: appearance.padding.unwrap_or(12.0),
+        margin: appearance.margin.unwrap_or(16.0),
+        focus_width: appearance.focus_width.unwrap_or(2.0),
+        reduced_motion: appearance.reduced_motion.unwrap_or(false),
+    };
+    let source = if mode == "classic" || (mode == "auto" && name == "classic") {
+        "NIRUAMP fallback".to_string()
+    } else if custom {
+        format!("NIRUX custom · {}", custom_theme_path(&name).display())
+    } else {
+        format!("NIRUX · {name}")
+    };
+    Ok(ResolvedTheme {
+        palette,
+        appearance,
+        name,
+        label,
+        source,
+        warnings,
+    })
+}
+
+pub fn available_themes() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = BUILTINS
+        .iter()
+        .map(|b| (b.name.to_string(), b.label.to_string()))
+        .collect();
+    if let Ok(entries) = fs::read_dir(niruwm_dir().join("themes")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let key = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if key.is_empty()
+                || key.len() > 80
+                || !key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                continue;
+            }
+            if out.iter().any(|(k, _)| *k == key) {
+                continue;
+            }
+            let label = fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| toml::from_str::<ThemeFile>(&text).ok())
+                .and_then(|t| t.name)
+                .unwrap_or_else(|| key.clone());
+            out.push((key, label));
+        }
+    }
+    out.sort_by_key(|a| a.1.to_lowercase());
+    out
+}
+
+pub fn install_style(ctx: &egui::Context, theme: &ResolvedTheme, prefs: &Preferences) {
+    let p = theme.palette;
+    let mut visuals = if p.light {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
+    visuals.panel_fill = p.background;
+    visuals.window_fill = p.panel;
+    visuals.extreme_bg_color = p.inset;
+    visuals.faint_bg_color = p.surface;
+    visuals.code_bg_color = p.inset;
+    visuals.selection.bg_fill = p.selected;
+    visuals.selection.stroke = egui::Stroke::new(1.0_f32, p.foreground);
+    visuals.hyperlink_color = p.accent;
+    visuals.warn_fg_color = p.warning;
+    visuals.error_fg_color = p.error;
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, p.border);
+    visuals.widgets.noninteractive.bg_fill = p.surface;
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, p.foreground);
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, p.border);
+    visuals.widgets.inactive.bg_fill = p.surface_hi;
+    visuals.widgets.inactive.weak_bg_fill = p.surface;
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, p.foreground);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, p.border);
+    visuals.widgets.hovered.bg_fill = blend(p.surface_hi, p.focus, 0.18);
+    visuals.widgets.hovered.weak_bg_fill = p.surface_hi;
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, p.foreground);
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, p.focus);
+    visuals.widgets.active.bg_fill = p.selected;
+    visuals.widgets.active.weak_bg_fill = p.selected;
+    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, p.foreground);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, p.focus);
+    visuals.widgets.open.bg_fill = p.surface_hi;
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0_f32, p.focus);
+    visuals.widgets.noninteractive.rounding = egui::Rounding::same(2.0);
+    visuals.widgets.inactive.rounding = egui::Rounding::same(2.0);
+    visuals.widgets.hovered.rounding = egui::Rounding::same(2.0);
+    visuals.widgets.active.rounding = egui::Rounding::same(2.0);
+    visuals.widgets.open.rounding = egui::Rounding::same(2.0);
+    visuals.window_rounding = egui::Rounding::same(3.0);
+    visuals.menu_rounding = egui::Rounding::same(2.0);
+    ctx.set_visuals(visuals);
+
+    let base = (theme.appearance.font_size * prefs.scale).clamp(10.0, 32.0);
+    let mut style = (*ctx.style()).clone();
+    style.text_styles = [
+        (
+            egui::TextStyle::Heading,
+            egui::FontId::proportional(base * 1.30),
+        ),
+        (egui::TextStyle::Body, egui::FontId::proportional(base)),
+        (egui::TextStyle::Monospace, egui::FontId::monospace(base)),
+        (egui::TextStyle::Button, egui::FontId::proportional(base)),
+        (
+            egui::TextStyle::Small,
+            egui::FontId::proportional(base * 0.80),
+        ),
+    ]
+    .into();
+    let gap = theme.appearance.gap * prefs.scale;
+    style.spacing.item_spacing = egui::vec2(gap, gap * 0.7);
+    style.spacing.button_padding = egui::vec2(gap, gap * 0.35);
+    style.spacing.window_margin = egui::Margin::same(theme.appearance.padding * prefs.scale);
+    style.animation_time = if theme.appearance.reduced_motion || prefs.reduced_motion == Some(true)
+    {
+        0.0
+    } else {
+        0.12
+    };
+    ctx.set_style(style);
+
+    if let Some(path) = theme.appearance.font_path.as_ref() {
+        if let Ok(bytes) = fs::read(path) {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts
+                .font_data
+                .insert("nirux-font".into(), egui::FontData::from_owned(bytes));
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts
+                    .families
+                    .entry(family)
+                    .or_default()
+                    .insert(0, "nirux-font".into());
+            }
+            ctx.set_fonts(fonts);
+        }
+    }
+}
+
+pub fn reduced_motion(theme: &ResolvedTheme, prefs: &Preferences) -> bool {
+    prefs
+        .reduced_motion
+        .unwrap_or(theme.appearance.reduced_motion)
+}
+
+#[derive(Debug)]
+pub enum ThemeEvent {
+    Updated(Box<ResolvedTheme>),
+    Warning(String),
+}
+
+pub struct ThemeWatcher {
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+    pub rx: Receiver<ThemeEvent>,
+}
+
+impl ThemeWatcher {
+    pub fn spawn(prefs: Arc<Mutex<Preferences>>, ctx: egui::Context) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let (tx, rx) = mpsc::channel();
+        let handle = thread::Builder::new()
+            .name("niruamp-theme-watch".into())
+            .spawn(move || watch_loop(prefs, ctx, tx, stop2))
+            .ok();
+        Self { stop, handle, rx }
+    }
+}
+
+impl Drop for ThemeWatcher {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+struct Fingerprint {
+    mode: String,
+    config: Option<(SystemTime, u64)>,
+    appearance: Option<(SystemTime, u64)>,
+    themes_dir: Option<SystemTime>,
+}
+
+fn fingerprint(prefs: &Preferences) -> Fingerprint {
+    let meta = |p: &Path| {
+        fs::metadata(p)
+            .ok()
+            .map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()))
+    };
+    let mode = prefs.theme.clone();
+    let resolved_name = if mode == "auto" {
+        theme_name_from_config().ok().flatten().unwrap_or_default()
+    } else if mode == "classic" {
+        String::new()
+    } else {
+        mode.clone()
+    };
+    let theme_file = if resolved_name.is_empty() {
+        None
+    } else {
+        meta(&custom_theme_path(&resolved_name))
+    };
+    Fingerprint {
+        mode: format!("{mode}|{resolved_name}|{theme_file:?}"),
+        config: meta(&niruwm_dir().join("config.toml")),
+        appearance: meta(&niruwm_dir().join("appearance.toml")),
+        themes_dir: fs::metadata(niruwm_dir().join("themes"))
+            .ok()
+            .and_then(|m| m.modified().ok()),
+    }
+}
+
+fn watch_loop(
+    prefs: Arc<Mutex<Preferences>>,
+    ctx: egui::Context,
+    tx: Sender<ThemeEvent>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut last = {
+        let p = prefs.lock().map(|p| p.clone()).unwrap_or_default();
+        fingerprint(&p)
+    };
+    while !stop.load(Ordering::Relaxed) {
+        thread::sleep(Duration::from_millis(900));
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let snapshot = prefs.lock().map(|p| p.clone()).unwrap_or_default();
+        let now = fingerprint(&snapshot);
+        if now == last {
+            continue;
+        }
+        last = now;
+        let debounce = Instant::now();
+        while debounce.elapsed() < Duration::from_millis(320) && !stop.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(80));
+        }
+        let current = prefs.lock().map(|p| p.clone()).unwrap_or_default();
+        match resolve(&current) {
+            Ok(theme) => {
+                let _ = tx.send(ThemeEvent::Updated(Box::new(theme)));
+            }
+            Err(e) => {
+                let _ = tx.send(ThemeEvent::Warning(e));
+            }
+        }
+        ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct TempEnv {
+        root: PathBuf,
+        old: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl TempEnv {
+        fn new(name: &str) -> Self {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "niruamp-theme-test-{name}-{}-{stamp}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(root.join("niruwm/themes")).unwrap();
+            let old = vec![
+                ("XDG_CONFIG_HOME", std::env::var_os("XDG_CONFIG_HOME")),
+                ("HOME", std::env::var_os("HOME")),
+            ];
+            std::env::set_var("XDG_CONFIG_HOME", &root);
+            std::env::set_var("HOME", &root);
+            Self { root, old }
+        }
+        fn dir(&self) -> PathBuf {
+            self.root.join("niruwm")
+        }
+        fn write(&self, relative: &str, text: &str) {
+            let path = self.dir().join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, text).unwrap();
+        }
+    }
+
+    impl Drop for TempEnv {
+        fn drop(&mut self) {
+            for (key, value) in &self.old {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn pref(theme: &str) -> Preferences {
+        Preferences {
+            theme: theme.into(),
+            ..Preferences::default()
+        }
+    }
+
+    #[test]
+    fn standalone_fallback_without_nirux() {
+        let _guard = env_lock().lock().unwrap();
+        let _env = TempEnv::new("standalone");
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.name, "classic");
+        assert_eq!(theme.source, "NIRUAMP fallback");
+        assert_eq!(theme.palette.background, Color32::from_rgb(26, 28, 29));
+        assert!(!theme.palette.light);
+    }
+
+    #[test]
+    fn builtin_theme_without_custom_file() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("builtin");
+        env.write("config.toml", "theme = \"niru-nord\"\n");
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.name, "niru-nord");
+        assert_eq!(
+            theme.palette.background,
+            Color32::from_rgb(0x2e, 0x34, 0x40)
+        );
+        assert!(theme.source.contains("niru-nord"));
+        assert!(!theme.appearance.reduced_motion);
+    }
+
+    #[test]
+    fn custom_theme_takes_precedence() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("custom");
+        env.write("config.toml", "theme = \"niru-nord\"\n");
+        env.write("themes/niru-nord.toml", "name = \"Mine\"\nbackground = \"101010\"\nforeground = \"eeeeee\"\nmuted = \"999999\"\nborder = \"333333\"\nfocus = \"4488cc\"\n");
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.label, "Mine");
+        assert_eq!(
+            theme.palette.background,
+            Color32::from_rgb(0x10, 0x10, 0x10)
+        );
+        assert!(theme.source.starts_with("NIRUX custom"));
+    }
+
+    #[test]
+    fn sparse_appearance_overrides_semantic_roles() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("appearance");
+        env.write("config.toml", "theme = \"niru-noir\"\n");
+        env.write("appearance.toml", "schema = 1\n[colors]\nbackground = \"010203\"\nfocus = \"ff0000\"\nwarning = \"00ff00\"\n[font]\nsize = 17.0\n[spacing]\ngap = 10\n[motion]\nreduced = true\n");
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.palette.background, Color32::from_rgb(1, 2, 3));
+        assert_eq!(theme.palette.focus, Color32::from_rgb(255, 0, 0));
+        assert_eq!(theme.palette.warning, Color32::from_rgb(0, 255, 0));
+        assert_eq!(theme.appearance.font_size, 17.0);
+        assert_eq!(theme.appearance.gap, 10.0);
+        assert!(theme.appearance.reduced_motion);
+    }
+
+    #[test]
+    fn malformed_appearance_is_ignored() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("bad-appearance");
+        env.write("config.toml", "theme = \"niru-satie\"\n");
+        env.write(
+            "appearance.toml",
+            "schema = 99\n[colors]\nbackground = \"zzz\"\n",
+        );
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.name, "niru-satie");
+        assert_eq!(
+            theme.palette.background,
+            Color32::from_rgb(0x14, 0x14, 0x14)
+        );
+        assert!(theme.warnings.iter().any(|w| w.contains("schema")));
+    }
+
+    #[test]
+    fn malformed_custom_theme_is_an_error_not_partial_apply() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("bad-custom");
+        env.write("config.toml", "theme = \"mine\"\n");
+        env.write("themes/mine.toml", "background = \"nope\"\n");
+        assert!(resolve(&Preferences::default()).is_err());
+    }
+
+    #[test]
+    fn manual_classic_ignores_nirux_colour_overrides() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("manual-classic");
+        env.write("config.toml", "theme = \"niru-nord\"\n");
+        env.write(
+            "appearance.toml",
+            "schema = 1\n[colors]\nbackground = \"ff00ff\"\n",
+        );
+        let theme = resolve(&pref("classic")).unwrap();
+        assert_eq!(theme.name, "classic");
+        assert_eq!(theme.palette.background, Color32::from_rgb(26, 28, 29));
+    }
+
+    #[test]
+    fn light_theme_derives_readable_roles() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("light");
+        env.write("config.toml", "theme = \"niru-carl-larsson\"\n");
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert!(theme.palette.light);
+        assert!(luminance(theme.palette.foreground) < 0.35);
+        assert!(luminance(theme.palette.background) > 0.75);
+        assert_ne!(theme.palette.selected, theme.palette.surface);
+    }
+
+    #[test]
+    fn watcher_applies_live_theme_changes_after_debounce() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("watch");
+        env.write("config.toml", "theme = \"niru-nord\"\n");
+        let initial = resolve(&Preferences::default()).unwrap();
+        assert_eq!(initial.name, "niru-nord");
+        let prefs = Arc::new(Mutex::new(Preferences::default()));
+        let ctx = egui::Context::default();
+        let watcher = ThemeWatcher::spawn(prefs.clone(), ctx);
+        thread::sleep(Duration::from_millis(1300));
+        env.write("config.toml", "theme = \"niru-satie\"\n");
+        let deadline = Instant::now() + Duration::from_secs(6);
+        let mut updated = None;
+        while Instant::now() < deadline {
+            if let Ok(event) = watcher.rx.recv_timeout(Duration::from_millis(250)) {
+                if let ThemeEvent::Updated(theme) = event {
+                    updated = Some(theme.name.clone());
+                    break;
+                }
+            }
+        }
+        assert_eq!(updated.as_deref(), Some("niru-satie"));
+        // A malformed custom theme must not replace the working appearance.
+        thread::sleep(Duration::from_millis(1100));
+        env.write("config.toml", "theme = \"broken\"\n");
+        env.write("themes/broken.toml", "background = \"nope\"\n");
+        let deadline = Instant::now() + Duration::from_secs(6);
+        let mut warned = false;
+        while Instant::now() < deadline {
+            if let Ok(event) = watcher.rx.recv_timeout(Duration::from_millis(250)) {
+                if let ThemeEvent::Warning(msg) = event {
+                    warned = msg.contains("broken");
+                    break;
+                }
+            }
+        }
+        assert!(warned);
+    }
+
+    #[test]
+    fn available_themes_include_builtins_and_custom_files() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("catalog");
+        env.write("themes/my-theme.toml", "name = \"My Theme\"\nbackground = \"101010\"\nforeground = \"eeeeee\"\nmuted = \"999999\"\nborder = \"333333\"\nfocus = \"4488cc\"\n");
+        let themes = available_themes();
+        assert!(themes.iter().any(|(k, _)| k == "niru-noir"));
+        assert!(themes
+            .iter()
+            .any(|(k, label)| k == "my-theme" && label == "My Theme"));
+    }
+}
