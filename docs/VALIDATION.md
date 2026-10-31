@@ -19,10 +19,12 @@ Target: NIRUX / X11 and non-NIRUX Linux desktops
 | Rust | rustc/cargo 1.99.1 |
 | Python | 3.12.3 |
 | NPLAY revision | `852050b` (release: NPLAY 1.7.0 headless control service) |
+| Live target | `niruxwork`, Debian 13.7 (trixie), kernel 7.2.11+deb13-amd64, AMD Ryzen AI 9 HX PRO 375, 24 logical CPUs, 62 GiB RAM, Radeon 880M/890M, X11/NIRUX |
 
-The owner did not provide external bare-metal/SSH test machines during this
-implementation pass. No remote testing, audio device testing, GPU testing or
-credentials were fabricated. All results below are from the local host.
+The owner supplied a Tailscale/SSH target (`niruxwork`) late in the pass. Live
+Navidrome playback, Sveriges Radio browse, real mpv and real CAVA were then
+verified there, plus a prebuilt-binary installation. No credentials or test
+results were fabricated; Spotify/YouTube accounts remained unavailable.
 
 ## Automated tests
 
@@ -40,6 +42,41 @@ credentials were fabricated. All results below are from the local host.
 The pre-existing NPLAY suite was run before and after the service changes and
 remained green. Standalone terminal NPLAY imports no GUI toolkit and needs no
 display server.
+
+## Live verification on niruxwork (Debian 13.7)
+
+- Prebuilt `v0.1.0` x86_64 release asset installed with `./install.sh --prebuilt`
+  (no Rust toolchain used at install time); `niruamp --version` returns 0.1.0.
+- NPLAY 1.7.0 running as the service; the real GUI attached to the existing
+  session without starting a second engine.
+- Navidrome configured and live: browsing `newest` returned albums, and a real
+  Navidrome stream was playing through mpv (`transport=mpv`, `source=navidrome`,
+  position advanced over repeated snapshots).
+- Sveriges Radio configured and live: `sr/live` returned P1/P2/P3/P4 entries.
+- Real CAVA was running and delivering visualization data; the UI displayed
+  live spectrum bars (confirmed process `cava`, capability `visualization=true`).
+- NIRUX theme in use was `niru-forest-vigil`; the new binary rendered the real
+  desktop theme (green palette) correctly.
+- Real mpv and CAVA processes were present alongside the frontend and backend.
+  Audible output was not independently recorded, but mpv was decoding a live
+  Navidrome stream, position advanced, and CAVA captured the output.
+- A screenshot of the real desktop was inspected locally. It is intentionally
+  **not committed** because it contains the owner's personal library metadata,
+  artwork and queue. The provided screenshots use synthetic test library data.
+
+Real-hardware resource sample while playing with real CAVA, 30 s, 24 logical
+CPUs:
+
+| Process | CPU | RSS |
+|---|---:|---:|
+| NIRUAMP frontend | 4.596% | 192.6 MiB |
+| NPLAY backend | 0.966% | 59.5 MiB |
+| mpv | 3.064% | 110.4 MiB |
+| cava | 1.732% | 15.8 MiB |
+
+This is the most representative measurement in this report: real playback,
+real capture and a real desktop session. Frontend cost is 4.6% of one logical
+CPU (of 24), not the much higher software-GL/Xvfb figure.
 
 ## Functional evidence
 
@@ -124,11 +161,11 @@ Interpretation:
 |---|---|
 | Local library + playback/queue/playlists/artwork | Implemented; playback exercised through real NPLAY controller with fake mpv IPC; real audio not tested (mpv absent) |
 | Custom radio | Browse/add implemented; stream playback not live-tested |
-| Navidrome / Subsonic | Browse/search/play contract implemented and redacted; no server/credentials available, **not live-tested** |
-| Sveriges Radio | Browse/live/programme/search contract implemented; live network/audio **not live-tested** in this report |
+| Navidrome / Subsonic | **Live-verified on niruxwork**: browse and real mpv playback of a Navidrome stream |
+| Sveriges Radio | **Live-verified on niruxwork**: configured, `sr/live` returned P1–P4; live audio not independently recorded |
 | YouTube | Search contract + yt-dlp availability gate implemented; yt-dlp/audio **not live-tested** |
 | Spotify | Settings/OAuth handoff, browse/devices/play contract implemented; Premium account/librespot unavailable, **not live-tested**; EQ unsupported |
-| CAVA visualization | Disabled state and synthetic rendering harness verified; real CAVA capture **not live-tested** |
+| CAVA visualization | **Live-verified on niruxwork**: real cava process, `visualization=true`, live bars; synthetic harness also exercised on the build host |
 | MPRIS/statistics/notifications | Owned by NPLAY and covered by its existing suite; service attaches to same controller |
 
 ## Acceptance gate status
@@ -147,8 +184,9 @@ Interpretation:
       recovery and standalone fallback; custom/sparse theme unit tests pass.
 - [x] Everyday workflows (search, browse, queue edits, playlists, favorites,
       settings, reconnect, seek) verified; playback state via fake mpv.
-- [ ] **Every major configured source exercised live.** Unavailable accounts,
-      mpv/CAVA and provider credentials prevented this; not claimed.
+- [ ] **Every major configured source exercised live.** Local, Navidrome and SR
+      browse/play plus real mpv/CAVA were live-verified on niruxwork; Spotify and
+      YouTube accounts were unavailable, so full coverage is not claimed.
 - [x] Seek/clock/visualization/EQ disabled states are honest; EQ is absent rather
       than fake; CAVA unavailable state is explicit.
 - [x] Layout checks at 800×600, 1366×768, 1920×1080 and 1.5× scaling; HiDPI
@@ -163,14 +201,14 @@ Interpretation:
 
 ## Remaining concrete blockers
 
-1. No authorized bare-metal/SSH machines were supplied, so audio devices, real
-   NIRUX/NIRUWM, hardware GL, HiDPI, WM tiling and actual provider accounts could
-   not be exercised.
-2. This host has neither `mpv` nor `cava` installed; real audio and real CAVA
-   capture are unverified. The deterministic mpv IPC harness tests NPLAY's real
-   controller path but emits no sound.
-3. Navidrome, Sveriges Radio network playback, YouTube/yt-dlp and Spotify
-   Premium/librespot require accounts/services not available here.
+1. The build host has neither `mpv` nor `cava`, so build-host playback and CAVA
+   used labelled harnesses. Real mpv playback and real CAVA were verified later
+   on niruxwork.
+2. YouTube/yt-dlp and Spotify Premium/librespot accounts were unavailable, so
+   those sources remain not live-tested. Real Navidrome and SR paths were
+   verified.
+3. HiDPI/mixed-monitor, WM tiling and audible-output recording were not
+   independently exercised; the live target used a normal X11 desktop.
 4. Equalizer is intentionally not implemented because NPLAY exposes no EQ DSP
    for mpv and Spotify is not routed through mpv.
 

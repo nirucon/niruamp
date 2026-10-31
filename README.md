@@ -42,6 +42,7 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 ## Requirements
 
 - Linux with X11 or XWayland. The UI uses `eframe`/`egui` with the Glow renderer.
+  Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0.
 - **NPLAY 1.7.0+** with its normal runtime prerequisites (`mpv`, Python 3).
 - Rust 1.75+ to build.
 - Optional: `cava` (visualization), `yt-dlp` (YouTube), `librespot` (Spotify
