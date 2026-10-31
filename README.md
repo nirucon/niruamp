@@ -56,10 +56,24 @@ cd niruamp
 niruamp
 ```
 
-The installer builds a release binary, installs it to `~/.local/bin/niruamp`,
-adds a desktop entry and a scalable original icon. It refuses to continue when
-NPLAY is missing or older than 1.7.0; set `NIRUAMP_SKIP_NPLAY_CHECK=1` only for
-packaging experiments.
+The installer downloads the published x86_64 Linux release binary when one is
+available and falls back to a source build otherwise. It installs to
+`~/.local/bin/niruamp`, adds a desktop entry and a scalable original icon, and
+refuses to continue when NPLAY is missing or older than 1.7.0. Set
+`NIRUAMP_SKIP_NPLAY_CHECK=1` only for packaging experiments.
+
+```sh
+./install.sh --prebuilt  # force the published binary (Debian 12+ / glibc 2.36+)
+./install.sh --source    # always build with cargo
+```
+
+The prebuilt archive is built in Debian 12 for x86_64 and needs
+`libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
+
+```sh
+tar -xzf niruamp-0.1.0-x86_64-linux-gnu.tar.gz
+install -m755 niruamp ~/.local/bin/niruamp
+```
 
 ```sh
 ./uninstall.sh          # keeps NIRUAMP preferences and all NPLAY data
