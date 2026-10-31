@@ -227,6 +227,23 @@ impl NiruampApp {
                         false,
                     );
                 }
+                let mut tray = self.prefs.tray_enabled;
+                if ui
+                    .checkbox(
+                        &mut tray,
+                        RichText::new("Minimize to system tray").size(s(11.0)),
+                    )
+                    .changed()
+                {
+                    self.set_tray_enabled(ctx, tray);
+                }
+                if let Some(err) = self.tray_error.as_ref() {
+                    ui.label(
+                        RichText::new(format!("Tray unavailable: {err}"))
+                            .size(s(8.0))
+                            .color(p.warning),
+                    );
+                }
             });
         });
     }
@@ -473,6 +490,17 @@ impl NiruampApp {
                     .into(),
                 ),
                 (
+                    "System tray",
+                    if self.tray.is_some() && self.prefs.tray_enabled {
+                        "active"
+                    } else if self.tray_error.is_some() {
+                        "unavailable"
+                    } else {
+                        "off"
+                    }
+                    .into(),
+                ),
+                (
                     "NIRUAMP config",
                     config::config_path().display().to_string(),
                 ),
@@ -501,7 +529,8 @@ impl NiruampApp {
                         }),
                     );
                     self.vis.started = false;
-                    self.vis.bars.clear();
+                    self.vis.target.clear();
+                    self.vis.displayed.clear();
                 }
             });
             ui.label(RichText::new("Standalone `nplay`, its diagnostics, terminal UI and regression suite never require NIRUAMP or a display server.").size(s(9.0)).color(p.muted));

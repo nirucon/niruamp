@@ -20,6 +20,9 @@ pub(crate) enum RowAction {
 pub(crate) struct RowOutcome {
     pub(crate) clicked: bool,
     pub(crate) double_clicked: bool,
+    pub(crate) drag_started: bool,
+    pub(crate) drag_stopped: bool,
+    pub(crate) hovered: bool,
     pub(crate) action: Option<RowAction>,
     pub(crate) rect: Rect,
 }
@@ -33,10 +36,18 @@ pub(crate) fn track_row(
     current: bool,
     row_h: f32,
     show_duration: bool,
+    draggable: bool,
 ) -> RowOutcome {
     let p = app.palette();
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, row_h), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(width, row_h),
+        Sense {
+            click: true,
+            drag: draggable,
+            focusable: false,
+        },
+    );
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, egui::Rounding::ZERO, p.selected);
@@ -126,6 +137,9 @@ pub(crate) fn track_row(
     let mut outcome = RowOutcome {
         clicked: response.clicked(),
         double_clicked: response.double_clicked(),
+        drag_started: response.drag_started(),
+        drag_stopped: response.drag_stopped(),
+        hovered: response.hovered(),
         action: None,
         rect,
     };
@@ -260,6 +274,7 @@ impl NiruampApp {
             let w = s(13.0) + label.chars().count() as f32 * s(6.3);
             let r = Rect::from_min_size(pos2(x, rect.top()), vec2(w, rect.height()));
             let resp = ui.interact(r, Id::new(("panel-tab", tab.key())), Sense::click());
+            resp.draw_focus(ui.painter(), r, &p);
             let active = self.tab == tab;
             if active {
                 ui.painter().rect_filled(
@@ -275,7 +290,7 @@ impl NiruampApp {
                 FontId::proportional(s(9.5)),
                 if active { p.foreground } else { p.muted },
             );
-            if resp.clicked() {
+            if resp.activated(ui) {
                 self.show_tab(tab, ctx);
             }
             x += w + s(4.0);
@@ -299,7 +314,7 @@ impl NiruampApp {
                 true,
                 tip,
             );
-            if resp.clicked() {
+            if resp.activated(ui) {
                 match icon {
                     Icon::Refresh => match self.tab {
                         Tab::Browse => self.default_browse(),
@@ -459,7 +474,30 @@ impl NiruampApp {
                         current,
                         row_h,
                         true,
+                        queue,
                     );
+                    if outcome.drag_started {
+                        self.queue_drag = Some(i);
+                        self.queue_selected = i;
+                    }
+                    if queue && self.queue_drag.is_some() && outcome.hovered {
+                        if let Some(from) = self.queue_drag {
+                            if ui.input(|i| i.pointer.any_released()) && from != i {
+                                self.reorder_queue(from, i);
+                                self.queue_drag = None;
+                            }
+                        }
+                        if self.queue_drag.is_some() {
+                            let y = outcome.rect.top();
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(outcome.rect.left(), y),
+                                    egui::pos2(outcome.rect.right(), y),
+                                ],
+                                Stroke::new(2.0_f32, p.accent),
+                            );
+                        }
+                    }
                     if outcome.clicked {
                         if queue {
                             self.queue_selected = i;
@@ -475,6 +513,13 @@ impl NiruampApp {
                     }
                 }
             });
+        if self.queue_drag.is_some() {
+            if ctx.input(|i| i.pointer.any_released()) {
+                self.queue_drag = None;
+            } else {
+                ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+        }
         self.keyboard_nav = false;
     }
 
@@ -587,5 +632,5 @@ fn small_button(ui: &mut Ui, rect: Rect, label: &str, p: &crate::theme::Palette)
             p.muted
         },
     );
-    resp.clicked()
+    resp.activated(ui)
 }

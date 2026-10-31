@@ -160,10 +160,10 @@ impl NiruampApp {
                 true,
                 tip,
             );
-            if resp.clicked() {
+            if resp.activated(ui) {
                 match icon {
                     Icon::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                    Icon::Minimize => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
+                    Icon::Minimize => self.hide_to_tray(ctx),
                     Icon::Down => self.toggle_shade(ctx),
                     Icon::Pin => self.toggle_pin(ctx),
                     Icon::Settings => self.show_tab(Tab::Settings, ctx),
@@ -395,11 +395,12 @@ impl NiruampApp {
             p.led_dim,
         );
         let led_resp = ui.interact(led_rect, Id::new("deck-led"), Sense::click());
-        if led_resp.clicked() {
+        led_resp.draw_focus(ui.painter(), led_rect, &p);
+        if led_resp.activated(ui) {
             self.prefs.remaining_time = !self.prefs.remaining_time;
             self.update_prefs(ui.ctx());
         }
-        led_resp.on_hover_text("Toggle elapsed / remaining time");
+        led_resp.on_hover_text("Toggle elapsed / remaining time (Enter when focused)");
 
         self.draw_visualizer(ui, vis_rect);
     }
@@ -446,7 +447,7 @@ impl NiruampApp {
             );
             return;
         }
-        if self.vis.bars.is_empty() {
+        if self.vis.displayed.is_empty() {
             let label = if self.playback.is_playing() {
                 "ACQUIRING CAVA"
             } else {
@@ -461,11 +462,11 @@ impl NiruampApp {
             );
             return;
         }
-        let n = self.vis.bars.len().min(48);
+        let n = self.vis.displayed.len().min(48);
         let gap = 1.0;
         let bw = ((inner.width() - gap * (n.saturating_sub(1) as f32)) / n.max(1) as f32).max(1.0);
         for i in 0..n {
-            let v = self.vis.bars[i].clamp(0.0, 1.0);
+            let v = self.vis.displayed[i].clamp(0.0, 1.0);
             let h = (inner.height() * (0.06 + v * 0.94)).max(1.0);
             let x = inner.left() + i as f32 * (bw + gap);
             let bar = Rect::from_min_max(pos2(x, inner.bottom() - h), pos2(x + bw, inner.bottom()));
@@ -580,7 +581,7 @@ impl NiruampApp {
                 true,
                 tip,
             );
-            if resp.clicked() {
+            if resp.activated(ui) {
                 match icon {
                     Icon::Prev => self.previous(),
                     Icon::Play => self.toggle(),
@@ -704,7 +705,7 @@ impl NiruampApp {
             if matches!(icon, Icon::Equalizer) {
                 resp = resp.on_hover_text("Equalizer unavailable: NPLAY exposes no EQ DSP for mpv, and Spotify is not routed through mpv.");
             }
-            if resp.clicked() {
+            if resp.activated(ui) {
                 match icon {
                     Icon::Shuffle => self.shuffle(),
                     Icon::Repeat => self.repeat(),
@@ -816,7 +817,7 @@ impl NiruampApp {
                 true,
                 tip,
             );
-            if resp.clicked() {
+            if resp.activated(ui) {
                 match icon {
                     Icon::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                     Icon::Down => self.toggle_shade(ctx),
@@ -827,7 +828,15 @@ impl NiruampApp {
             }
             x -= btn + s(2.0);
         }
-        let drag = ui.interact(rect, Id::new("shade-drag"), Sense::click_and_drag());
+        let drag = ui.interact(
+            rect,
+            Id::new("shade-drag"),
+            Sense {
+                click: true,
+                drag: true,
+                focusable: false,
+            },
+        );
         if drag.drag_started() {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }

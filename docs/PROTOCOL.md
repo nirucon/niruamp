@@ -1,12 +1,8 @@
 # NPLAY local control protocol (version 1)
 
-> Canonical backend document: `nplay/docs/PROTOCOL.md`. This copy is kept in
-> the NIRUAMP repository so the frontend contract travels with the client.
->
-> NIRUAMP tested against NPLAY **1.7.0**, protocol **1**. The client sends its
-> name/version in `initialize`, subscribes after handshake, treats `revision`
-> as monotonic, resynchronises with a full snapshot after reconnect, and never
-> calls `service.shutdown` on a service it did not start.
+> Canonical backend document: `nplay/docs/PROTOCOL.md`. This copy travels with
+> NIRUAMP so the frontend contract is self-contained. NIRUAMP 0.2.0 requires
+> NPLAY **1.7.1** and protocol **1**.
 
 NPLAY 1.7.0 adds a headless control service for graphical clients such as
 NIRUAMP. The terminal player is unchanged and does not require the service, a
@@ -139,6 +135,7 @@ service.
 | `queue.add` | `track`, optional `next` | |
 | `queue.add_many` | `tracks`, optional `next` | Max 1000 |
 | `queue.play` / `queue.remove` / `queue.move` | `index`, optional `delta` | |
+| `queue.reorder` | `from`, `to` | Move one queue item to an absolute index |
 | `queue.clear` | `{}` | |
 | `queue.save` | `name` | Saves the authoritative queue as a local playlist |
 | `browse` | `source`, `section`, optional `query`, `limit`, `offset`, `args` | See sources below |
@@ -224,5 +221,5 @@ requests, `-32010` incompatible protocol. Error `data` may include a bounded
 ## Minimum versions
 
 - Protocol version: `1`
-- NPLAY minimum: `1.7.0`
-- NIRUAMP tested against: `1.7.0`
+- NPLAY minimum: `1.7.1`
+- NIRUAMP minimum: `0.2.0`

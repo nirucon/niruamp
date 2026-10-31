@@ -8,7 +8,7 @@ artwork acquisition, listening statistics, notifications and MPRIS. The
 frontend never starts mpv, librespot, a scanner or a statistics pipeline.
 
 The two programs meet at NPLAY's versioned local service (protocol 1, shipped in
-NPLAY 1.7.0). See [PROTOCOL.md](PROTOCOL.md).
+NPLAY 1.7.1). See [PROTOCOL.md](PROTOCOL.md).
 
 ```
 NIRUAMP (Rust/egui)                    NPLAY (Python)
@@ -70,13 +70,23 @@ selection or steal text focus.
   and instance activation wake the UI.
 - Playing: one bounded clock wake per second. The LED only renders whole
   seconds; position is interpolated locally between authoritative samples.
-- Visualization: capped at 10 Hz (5 Hz with reduced motion), visible only while
-  playing/paused and allowed. CAVA is stopped when hidden, disabled, or after
-  the service's idle timeout. No synthetic bars are generated.
+- Visualization: 30 Hz sampling with fast-attack/slow-release display easing and
+  log-shaped actual CAVA values; reduced motion lowers the rate. CAVA is stopped
+  when hidden, disabled, minimized to tray, or after the service's idle timeout.
+  No synthetic bars are generated.
+- Lists use `show_rows` virtualization in playlist, queue, browse and grouped
+  search results.
+- Custom controls participate in egui's focus chain and draw a visible focus
+  ring; Enter activates the focused control. Rows are selected with Up/Down and
+  are deliberately not part of the tab chain.
 - Windowshade changes the viewport size and draws a compact 58-point deck.
-- Scrollable lists use `show_rows` virtualization. Artwork decoding/downscaling
-  runs in a worker thread; textures are capped at 12 entries. The backend
-  artwork cache is bounded separately.
+- A bottom-right grip resizes the undecorated window.
+- An optional StatusNotifierItem tray lives on its own D-Bus thread. Menu
+  actions cross a bounded channel to the GUI thread; the GUI never blocks on
+  D-Bus. Hiding to tray suspends visualization and stops CAVA delivery.
+- Artwork decoding/downscaling runs in a worker thread to at most 256×256;
+  textures are capped at 8 entries. The backend artwork cache is bounded
+  separately.
 
 ## Appearance resolution
 
@@ -111,6 +121,9 @@ NIRUX colour overrides.
   disconnects/crashes, preventing orphaned audio.
 - A second service cannot take the endpoint lock and exits without disturbing
   the live socket. Stale sockets are replaced only after ownership checks.
+- Minimize-to-tray is best-effort: without a D-Bus SNI host it falls back to a
+  normal minimized window. Closing the window quits NIRUAMP; quit is also in the
+  tray menu.
 - Preferences and window state live in `~/.config/niruamp` and
   `~/.local/state/niruamp`; playback/session/library data remain NPLAY's.
 

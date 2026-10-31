@@ -1,9 +1,31 @@
 //! Original Winamp-inspired drawing primitives.
 use crate::theme::Palette;
 use egui::{
-    pos2, vec2, Color32, FontId, Id, Painter, Rect, Response, Rounding, Sense, Shape, Stroke, Ui,
-    Vec2,
+    pos2, vec2, Color32, FontId, Id, Key, Painter, Rect, Response, Rounding, Sense, Shape, Stroke,
+    Ui, Vec2,
 };
+
+pub trait ResponseExt {
+    /// Mouse click or Enter on a keyboard-focused control. Space stays bound to
+    /// transport globally, so Enter is the explicit activation key.
+    fn activated(&self, ui: &Ui) -> bool;
+    fn draw_focus(&self, painter: &Painter, rect: Rect, palette: &Palette);
+}
+
+impl ResponseExt for Response {
+    fn activated(&self, ui: &Ui) -> bool {
+        self.clicked() || (self.has_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
+    }
+    fn draw_focus(&self, painter: &Painter, rect: Rect, palette: &Palette) {
+        if self.has_focus() {
+            painter.rect_stroke(
+                rect.expand(1.0),
+                Rounding::same(3.0),
+                Stroke::new(1.5_f32, palette.accent),
+            );
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {

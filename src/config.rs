@@ -72,6 +72,7 @@ pub struct Preferences {
     pub always_on_top: bool,
     pub keep_playing: bool,
     pub show_visualization: bool,
+    pub tray_enabled: bool,
     /// `None` follows the NIRUX motion setting.
     pub reduced_motion: Option<bool>,
     pub remaining_time: bool,
@@ -89,6 +90,7 @@ impl Default for Preferences {
             always_on_top: false,
             keep_playing: false,
             show_visualization: true,
+            tray_enabled: true,
             reduced_motion: None,
             remaining_time: false,
             active_tab: "playlist".into(),

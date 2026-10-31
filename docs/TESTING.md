@@ -19,7 +19,7 @@ decoding, standalone/builtin/custom/sparse appearance resolution, light-theme
 contrast derivation, malformed appearance recovery, malformed custom-theme
 rejection and live debounced theme reload.
 
-The NPLAY suite covers the existing player/providers/statistics/theme tests plus
+The NPLAY suite (1.7.1+) covers the existing player/providers/statistics/theme tests plus
 the control service: handshake and capability discovery, protocol rejection,
 snapshot/event ordering, bulk queueing, playlists, external queueing, artwork
 redaction, invalid/oversized frames, socket/directory permissions, second
@@ -72,6 +72,14 @@ Useful checks:
 6. Change the NIRUX theme in `~/.config/niruwm/config.toml` while running;
    verify live apply. Repeat with a sparse custom theme, malformed
    `appearance.toml`, and the standalone `classic` setting.
+7. Press Tab repeatedly; verify a visible focus ring, then Enter activates the
+   focused control. Typing in search must not trigger transport shortcuts.
+8. In Queue, drag a row to another position and verify the order changes through
+   `queue.reorder`.
+9. Drag the bottom-right resize grip and verify the undecorated window resizes.
+10. Minimize to the tray (NIRUX/NIRUBAR SNI host), restore by clicking the icon,
+    and exercise play/pause, next/previous and quit from the tray menu. Without a
+    tray host, minimize must fall back to a normal minimized window.
 7. Stop NPLAY (`kill` the service) and verify the connection-lost screen;
    press Retry and verify a fresh service connects.
 8. Launch `niruamp` a second time; verify the first window is activated and no
@@ -102,6 +110,8 @@ processed by egui's viewport screenshot API and saved as PNG.
 | GUI crash | Owned service exits after `--idle-exit` | Service idle-exit test |
 | Backend crash/restart | Actionable error; Retry reconnects | Manual kill/Retry; service tests |
 | Two GUI launches | Second activates first; one player | Manual; single-instance socket |
+| Minimize to tray / restore | Window hidden, SNI item active, Activate restores | Local D-Bus: SNI name registered, hide + Activate/show verified |
+| No tray host | Normal minimized window | Code fallback; pending real desktop check |
 | Terminal NPLAY alone | Fully standalone | Full NPLAY suite passes without Rust/GUI |
 | Terminal + GUI simultaneously | One authoritative state via the service | Protocol design; terminal attach is a documented supported client |
 | Slow/dead client | Bounded queues; playback unaffected | Service queue/outstanding bounds; no playback stall test under load yet |
@@ -120,6 +130,9 @@ lower. CAVA/mpv harnesses are called out explicitly in the report.
 
 ## Not covered by automation
 
+- Real NIRUBAR tray icon/menu rendering (SNI registration and Activate were
+  verified under a local D-Bus session; visual tray/menu testing is pending a
+  NIRUX desktop).
 - Real mpv audio output, real CAVA audio capture, PulseAudio/PipeWire sessions.
 - Live Navidrome, Sveriges Radio, YouTube, Spotify and custom stream accounts.
 - A real NIRUX/NIRUWM session, mixed-DPI monitors, WM tiling rules or tray

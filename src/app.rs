@@ -4,8 +4,9 @@ use crate::model::*;
 use crate::platform::{self, BackendHandle, DependencyError, InstanceGuard};
 use crate::protocol::Incoming;
 use crate::theme::{self, Palette, ResolvedTheme, ThemeEvent, ThemeWatcher};
+use crate::tray::{TrayCommand, TrayHandle};
 use egui::{
-    Align2, Color32, Context, Frame, Id, Key, LayerId, Order, Rect, RichText, Stroke,
+    Align2, Color32, Context, Frame, Id, Key, LayerId, Order, Rect, RichText, Sense, Stroke,
     TextureHandle, Ui, Vec2,
 };
 use serde_json::{json, Value};
@@ -128,9 +129,13 @@ pub(crate) struct VisState {
     pub(crate) requested_start: bool,
     pub(crate) started: bool,
     pub(crate) inflight: bool,
-    pub(crate) bars: Vec<f32>,
+    /// Actual CAVA samples, log-shaped for visibility.
+    pub(crate) target: Vec<f32>,
+    /// Display easing between samples (fast attack, slower release).
+    pub(crate) displayed: Vec<f32>,
     pub(crate) failed: String,
     pub(crate) last_poll: Instant,
+    pub(crate) last_step: Instant,
     pub(crate) stop_sent: bool,
 }
 
@@ -140,9 +145,11 @@ impl Default for VisState {
             requested_start: false,
             started: false,
             inflight: false,
-            bars: Vec::new(),
+            target: Vec::new(),
+            displayed: Vec::new(),
             failed: String::new(),
             last_poll: Instant::now() - Duration::from_secs(10),
+            last_step: Instant::now(),
             stop_sent: true,
         }
     }
@@ -201,6 +208,7 @@ pub struct NiruampApp {
     pub(crate) tab: Tab,
     pub(crate) playlist_selected: usize,
     pub(crate) queue_selected: usize,
+    pub(crate) queue_drag: Option<usize>,
     pub(crate) browser: BrowserState,
     pub(crate) settings: SettingsState,
     pub(crate) vis: VisState,
@@ -235,6 +243,11 @@ pub struct NiruampApp {
     pub(crate) debug_messages: u64,
     pub(crate) ctx: Context,
     pub(crate) fitted_window: bool,
+    pub(crate) text_input_active: bool,
+    pub(crate) tray: Option<TrayHandle>,
+    pub(crate) tray_rx: Receiver<TrayCommand>,
+    pub(crate) tray_error: Option<String>,
+    pub(crate) hidden_to_tray: bool,
 }
 
 impl NiruampApp {
@@ -271,6 +284,18 @@ impl NiruampApp {
             Err(e) => (None, Some(e)),
         };
         let tab = Tab::from_key(&prefs.active_tab);
+        let (tray_tx, tray_rx) = mpsc::channel();
+        let (tray, tray_error) = if prefs.tray_enabled {
+            match TrayHandle::spawn(tray_tx, ctx.clone()) {
+                Ok(tray) => (Some(tray), None),
+                Err(e) => {
+                    eprintln!("niruamp: system tray unavailable: {e}");
+                    (None, Some(e))
+                }
+            }
+        } else {
+            (None, None)
+        };
         let (instance, instance_rx) = match instance {
             Some(mut guard) => {
                 let (tx, rx) = mpsc::channel();
@@ -300,6 +325,7 @@ impl NiruampApp {
             tab,
             playlist_selected: 0,
             queue_selected: 0,
+            queue_drag: None,
             browser: BrowserState::default(),
             settings: SettingsState::default(),
             vis: VisState::default(),
@@ -337,6 +363,11 @@ impl NiruampApp {
             debug_messages: 0,
             ctx: ctx.clone(),
             fitted_window: false,
+            text_input_active: false,
+            tray,
+            tray_rx,
+            tray_error,
+            hidden_to_tray: false,
         };
         if let Some(b) = &app.backend {
             let c = ctx.clone();
@@ -359,6 +390,7 @@ impl NiruampApp {
         if let Some(b) = self.backend.as_ref() {
             let snap = b.snapshot.clone();
             self.apply_snapshot(snap, ctx);
+            self.refresh_tray();
             // Subscriptions make the connection receive ordered state events.
             // The response itself is a fresh snapshot and covers the gap between
             // handshake and subscription.
@@ -562,7 +594,7 @@ impl NiruampApp {
                         ctx.load_texture(key.clone(), image, egui::TextureOptions::LINEAR);
                     self.artwork.cache.insert(key.clone(), texture);
                     self.artwork.order.push_back(key);
-                    while self.artwork.order.len() > 12 {
+                    while self.artwork.order.len() > 8 {
                         if let Some(old) = self.artwork.order.pop_front() {
                             self.artwork.cache.remove(&old);
                         }
@@ -636,6 +668,7 @@ impl NiruampApp {
                         self.volume_preview = None;
                         self.update_artwork(ctx);
                         self.clamp_selection();
+                        self.refresh_tray();
                         if self.settings.loaded {
                             // Source enablement and playback modes can change from
                             // the terminal; refresh without stealing focus.
@@ -795,11 +828,15 @@ impl NiruampApp {
             (PendingKind::VisData, Ok(value)) => {
                 self.vis.inflight = false;
                 if let Ok(r) = serde_json::from_value::<VisualizationData>(value) {
-                    self.vis.bars = r
+                    let shaped: Vec<f32> = r
                         .bars
                         .into_iter()
-                        .map(|b| (b as f32 / 255.0).clamp(0.0, 1.0))
+                        .map(|b| ((b as f32 / 255.0).clamp(0.0, 1.0)).powf(0.62))
                         .collect();
+                    if shaped.len() != self.vis.displayed.len() {
+                        self.vis.displayed = shaped.clone();
+                    }
+                    self.vis.target = shaped;
                 }
             }
             (PendingKind::Play, Ok(_)) => {}
@@ -898,6 +935,98 @@ impl NiruampApp {
         self.request("settings.get", json!({}), Some(PendingKind::Settings));
     }
 
+    fn refresh_tray(&mut self) {
+        let Some(tray) = self.tray.as_mut() else {
+            return;
+        };
+        let title = self
+            .playback
+            .current
+            .as_ref()
+            .map(|t| t.title.clone())
+            .unwrap_or_default();
+        let detail = self
+            .playback
+            .current
+            .as_ref()
+            .map(|t| {
+                let status = self.playback.status.to_uppercase();
+                let mut parts = vec![status];
+                if !t.artist.is_empty() {
+                    parts.push(t.artist.clone());
+                }
+                if !t.album.is_empty() && t.album != t.title {
+                    parts.push(t.album.clone());
+                }
+                parts.join(" · ")
+            })
+            .unwrap_or_else(|| "NPLAY frontend · stopped".into());
+        tray.update(&title, &detail, self.playback.is_playing());
+    }
+
+    fn drain_tray(&mut self, ctx: &Context) {
+        let mut commands = Vec::new();
+        while let Ok(command) = self.tray_rx.try_recv() {
+            commands.push(command);
+        }
+        for command in commands {
+            match command {
+                TrayCommand::Show => self.show_from_tray(ctx),
+                TrayCommand::Toggle => self.toggle(),
+                TrayCommand::Next => self.next(),
+                TrayCommand::Previous => self.previous(),
+                TrayCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                TrayCommand::Volume(delta) => self.volume_delta(delta as f64),
+            }
+        }
+    }
+
+    pub(crate) fn hide_to_tray(&mut self, ctx: &Context) {
+        if self.tray.is_some() && self.prefs.tray_enabled {
+            self.hidden_to_tray = true;
+            self.vis.target.clear();
+            self.vis.displayed.clear();
+            self.vis.started = false;
+            self.request("visualization.stop", json!({}), None);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+    }
+
+    pub(crate) fn show_from_tray(&mut self, ctx: &Context) {
+        self.hidden_to_tray = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
+    }
+
+    pub(crate) fn set_tray_enabled(&mut self, ctx: &Context, enabled: bool) {
+        self.prefs.tray_enabled = enabled;
+        if enabled && self.tray.is_none() {
+            let (tx, rx) = mpsc::channel();
+            match TrayHandle::spawn(tx, ctx.clone()) {
+                Ok(tray) => {
+                    self.tray = Some(tray);
+                    self.tray_error = None;
+                    self.refresh_tray();
+                }
+                Err(e) => {
+                    self.tray_error = Some(e.clone());
+                    self.toast(format!("System tray unavailable: {e}"), true);
+                }
+            }
+            self.tray_rx = rx;
+        }
+        if !enabled {
+            if let Some(tray) = self.tray.take() {
+                tray.shutdown();
+            }
+        }
+        self.update_prefs(ctx);
+    }
+
     fn update_artwork(&mut self, ctx: &Context) {
         let key = self.playback.current.as_ref().map(|t| t.key.clone());
         if key == self.artwork.current {
@@ -932,6 +1061,7 @@ impl NiruampApp {
             && self.capabilities.visualization
             && visible
             && matches!(self.playback.status.as_str(), "playing" | "paused")
+            && !self.hidden_to_tray
             && !ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         if should && !self.vis.started && !self.vis.requested_start && self.vis.failed.is_empty() {
             self.vis.requested_start = true;
@@ -944,9 +1074,9 @@ impl NiruampApp {
         }
         if should && self.vis.started && !self.vis.inflight {
             let interval = if self.reduce_motion {
-                Duration::from_millis(200)
+                Duration::from_millis(120)
             } else {
-                Duration::from_millis(100)
+                Duration::from_millis(33)
             };
             if self.vis.last_poll.elapsed() >= interval {
                 self.vis.last_poll = Instant::now();
@@ -961,11 +1091,28 @@ impl NiruampApp {
         if !should && self.vis.started && !self.vis.stop_sent {
             self.vis.stop_sent = true;
             self.vis.started = false;
-            self.vis.bars.clear();
+            self.vis.target.clear();
+            self.vis.displayed.clear();
             self.request("visualization.stop", json!({}), None);
         }
         if !self.capabilities.visualization {
             self.vis.started = false;
+        }
+    }
+
+    fn advance_visualization(&mut self) {
+        if self.vis.displayed.is_empty() || self.vis.target.len() != self.vis.displayed.len() {
+            return;
+        }
+        let now = Instant::now();
+        let dt = (now - self.vis.last_step).as_secs_f32().clamp(0.001, 0.2);
+        self.vis.last_step = now;
+        let attack = 1.0 - (-dt / 0.045).exp();
+        let release = 1.0 - (-dt / 0.14).exp();
+        for (shown, target) in self.vis.displayed.iter_mut().zip(self.vis.target.iter()) {
+            let delta = *target - *shown;
+            let factor = if delta >= 0.0 { attack } else { release };
+            *shown += delta * factor;
         }
     }
 
@@ -1336,6 +1483,18 @@ impl NiruampApp {
         );
     }
 
+    pub(crate) fn reorder_queue(&mut self, from: usize, to: usize) {
+        self.queue_selected = to;
+        self.request(
+            "queue.reorder",
+            json!({"from": from, "to": to}),
+            Some(PendingKind::Generic {
+                label: String::new(),
+                quiet: true,
+            }),
+        );
+    }
+
     pub(crate) fn clear_queue(&mut self) {
         self.request(
             "queue.clear",
@@ -1618,7 +1777,7 @@ impl NiruampApp {
             return;
         }
         let focused = ctx.memory(|m| m.focused().is_some());
-        let typing = ctx.wants_keyboard_input() || focused;
+        let typing = self.text_input_active;
         let shift = ctx.input(|i| i.modifiers.shift);
         let alt = ctx.input(|i| i.modifiers.alt);
         let ctrl = ctx.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -1748,7 +1907,7 @@ impl NiruampApp {
                 _ => {}
             }
         }
-        if enter {
+        if enter && !focused {
             self.activate_selected();
         }
         if del && self.tab == Tab::Queue {
@@ -1794,6 +1953,46 @@ impl NiruampApp {
                     ui.allocate_ui_at_rect(panel_rect, |ui| {
                         self.panel_ui(ui, ctx);
                     });
+                }
+                if !self.prefs.window_shade {
+                    let size = self.s(14.0);
+                    let grip = Rect::from_min_size(
+                        ui.max_rect().right_bottom() - egui::vec2(size, size),
+                        egui::vec2(size, size),
+                    );
+                    let resp = ui.interact(
+                        grip,
+                        Id::new("niruamp-resize-grip"),
+                        Sense {
+                            click: true,
+                            drag: true,
+                            focusable: false,
+                        },
+                    );
+                    if resp.dragged() {
+                        let delta = ctx.input(|i| i.pointer.delta());
+                        if let Some(inner) = ctx.input(|i| i.viewport().inner_rect) {
+                            let target = egui::vec2(
+                                (inner.width() + delta.x).max(self.s(400.0)),
+                                (inner.height() + delta.y).max(self.s(120.0)),
+                            );
+                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
+                        }
+                    }
+                    if resp.hovered() || resp.dragged() {
+                        ctx.set_cursor_icon(egui::CursorIcon::ResizeSouthEast);
+                    }
+                    let p = self.palette();
+                    for i in 0..3 {
+                        let off = self.s(3.0) + i as f32 * self.s(3.0);
+                        ui.painter().line_segment(
+                            [
+                                grip.right_bottom() - egui::vec2(off, self.s(2.0)),
+                                grip.right_bottom() - egui::vec2(self.s(2.0), off),
+                            ],
+                            Stroke::new(1.0_f32, p.muted),
+                        );
+                    }
                 }
             });
     }
@@ -1896,6 +2095,7 @@ impl NiruampApp {
         let s = move |v: f32| v * scale;
         let mut close = false;
         let mut submit = false;
+        let mut text_focus = false;
         let is_save_queue = matches!(&modal, Modal::SaveQueue { .. });
         egui::Area::new(Id::new("niruamp-modal"))
             .order(Order::Foreground)
@@ -1916,6 +2116,8 @@ impl NiruampApp {
                                 if !resp.has_focus() && resp.ctx.memory(|m| m.focused().is_none()) {
                                     resp.request_focus();
                                 }
+                                text_focus |= resp.has_focus();
+                                text_focus |= resp.has_focus();
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     submit = ui.button("SAVE").clicked();
@@ -1929,6 +2131,8 @@ impl NiruampApp {
                                 if !resp.has_focus() && resp.ctx.memory(|m| m.focused().is_none()) {
                                     resp.request_focus();
                                 }
+                                text_focus |= resp.has_focus();
+                                text_focus |= resp.has_focus();
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     submit = ui.button("RENAME").clicked();
@@ -1939,9 +2143,9 @@ impl NiruampApp {
                                 ui.label(RichText::new("CONFIGURE NAVIDROME").strong().color(p.foreground));
                                 ui.label(RichText::new("Credentials are stored by NPLAY with mode 0600 and are never returned to this UI.").small().color(p.muted));
                                 ui.add_space(6.0);
-                                ui.add(egui::TextEdit::singleline(url).hint_text("https://music.example.org"));
-                                ui.add(egui::TextEdit::singleline(user).hint_text("Username"));
-                                ui.add(egui::TextEdit::singleline(password).hint_text("Password").password(true));
+                                text_focus |= ui.add(egui::TextEdit::singleline(url).hint_text("https://music.example.org")).has_focus();
+                                text_focus |= ui.add(egui::TextEdit::singleline(user).hint_text("Username")).has_focus();
+                                text_focus |= ui.add(egui::TextEdit::singleline(password).hint_text("Password").password(true)).has_focus();
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     submit = ui.button("CONNECT").clicked();
@@ -1951,8 +2155,8 @@ impl NiruampApp {
                             Modal::AddRadio { name, url } => {
                                 ui.label(RichText::new("ADD CUSTOM RADIO").strong().color(p.foreground));
                                 ui.add_space(6.0);
-                                ui.add(egui::TextEdit::singleline(name).hint_text("Station name"));
-                                ui.add(egui::TextEdit::singleline(url).hint_text("https://stream.example.org/live.mp3"));
+                                text_focus |= ui.add(egui::TextEdit::singleline(name).hint_text("Station name")).has_focus();
+                                text_focus |= ui.add(egui::TextEdit::singleline(url).hint_text("https://stream.example.org/live.mp3")).has_focus();
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     submit = ui.button("ADD STATION").clicked();
@@ -1962,6 +2166,7 @@ impl NiruampApp {
                         }
                     });
             });
+        self.text_input_active = text_focus;
         if close {
             if matches!(modal, Modal::NewPlaylist { .. }) {
                 self.pending_new_playlist_track = None;
@@ -2181,8 +2386,11 @@ impl eframe::App for NiruampApp {
             }
         }
         self.drain_backend(ctx);
+        self.drain_tray(ctx);
         self.handle_dropped_files(ctx);
         self.handle_keys(ctx);
+        self.text_input_active = false;
+        self.advance_visualization();
         self.draw_title_and_body(ctx);
         self.draw_modal(ctx);
         self.draw_toasts(ctx);
@@ -2195,7 +2403,7 @@ impl eframe::App for NiruampApp {
             ctx.request_repaint_after(Duration::from_millis(400));
         }
         if self.vis.started && !self.reduce_motion && self.prefs.show_visualization {
-            ctx.request_repaint_after(Duration::from_millis(100));
+            ctx.request_repaint_after(Duration::from_millis(33));
         }
         if !self.toasts.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -2210,6 +2418,9 @@ impl eframe::App for NiruampApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(tray) = self.tray.take() {
+            tray.shutdown();
+        }
         self.window_state.save().ok();
         self.prefs.save().ok();
         self.request("visualization.stop", json!({}), None);
@@ -2225,8 +2436,8 @@ pub(crate) fn decode_artwork(data: &str) -> Result<egui::ColorImage, String> {
         .decode(data.as_bytes())
         .map_err(|e| e.to_string())?;
     let image = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-    let image = if image.width() > 640 || image.height() > 640 {
-        image.resize(640, 640, image::imageops::FilterType::Triangle)
+    let image = if image.width() > 256 || image.height() > 256 {
+        image.resize(256, 256, image::imageops::FilterType::Triangle)
     } else {
         image
     };
@@ -2260,6 +2471,22 @@ mod tests {
         let decoded = decode_artwork(&encoded).unwrap();
         assert_eq!(decoded.size, [8, 6]);
         assert_eq!(decoded.pixels.len(), 48);
+    }
+
+    #[test]
+    fn artwork_is_downscaled_to_a_small_texture() {
+        let image = image::RgbaImage::from_pixel(1024, 768, image::Rgba([1, 2, 3, 255]));
+        let mut bytes = Vec::new();
+        image
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let decoded = decode_artwork(&encoded).unwrap();
+        assert!(decoded.size[0] <= 256 && decoded.size[1] <= 256);
+        assert_eq!(decoded.size, [256, 192]);
     }
 
     #[test]

@@ -12,6 +12,7 @@ mod model;
 mod platform;
 mod protocol;
 mod theme;
+mod tray;
 mod views;
 
 use crate::app::NiruampApp;

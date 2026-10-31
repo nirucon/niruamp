@@ -1,8 +1,8 @@
 # NIRUAMP validation report
 
 Date: 2026-10-31
-Frontend: NIRUAMP 0.1.0, commit `8b9d9aa` (Rust, `eframe`/`egui` 0.29.1, Glow)
-Backend: NPLAY 1.7.0, control protocol 1
+Frontend: NIRUAMP 0.2.0 (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
+Backend: NPLAY 1.7.1, control protocol 1
 Target: NIRUX / X11 and non-NIRUX Linux desktops
 
 ## Test machine
@@ -18,7 +18,7 @@ Target: NIRUX / X11 and non-NIRUX Linux desktops
 | Renderer | Glow over software GL (llvmpipe); no hardware GLX session was available |
 | Rust | rustc/cargo 1.99.1 |
 | Python | 3.12.3 |
-| NPLAY revision | `852050b` (release: NPLAY 1.7.0 headless control service) |
+| NPLAY revision | `b834fe3` (release: NPLAY 1.7.1 queue reorder) |
 | Live target | `niruxwork`, Debian 13.7 (trixie), kernel 7.2.11+deb13-amd64, AMD Ryzen AI 9 HX PRO 375, 24 logical CPUs, 62 GiB RAM, Radeon 880M/890M, X11/NIRUX |
 
 The owner supplied a Tailscale/SSH target (`niruxwork`) late in the pass. Live
@@ -32,9 +32,9 @@ results were fabricated; Spotify/YouTube accounts remained unavailable.
 |---|---|
 | Rust format (`cargo fmt --all -- --check`) | pass |
 | Rust clippy (`cargo clippy --all-targets -- -D warnings`) | pass |
-| Rust unit tests (`cargo test`) | **16 passed** |
+| Rust unit tests (`cargo test`) | **17 passed** |
 | Rust release build (`cargo build --release --locked`) | pass |
-| NPLAY full Python suite (`python3 -m unittest discover -s tests`) | **80 passed** (68 pre-existing + 12 service) |
+| NPLAY full Python suite (`python3 -m unittest discover -s tests`) | **81 passed** (68 pre-existing + 13 service) |
 | NPLAY service tests | handshake, events, playlists, queue, bulk queue, external queueing, artwork redaction, malformed/oversized frames, permissions, second service, graceful shutdown, idle exit, local playback via real `Player` boundary with mpv IPC harness |
 | Install/uninstall | release binary, desktop entry, SVG icon installed; `--version` works; uninstall preserves preferences and NPLAY data |
 | Second GUI launch | exits 0; first window remains and is activated; no second backend/player |
@@ -43,7 +43,7 @@ The pre-existing NPLAY suite was run before and after the service changes and
 remained green. Standalone terminal NPLAY imports no GUI toolkit and needs no
 display server.
 
-## Live verification on niruxwork (Debian 13.7)
+## Live verification on niruxwork (Debian 13.7, NIRUAMP 0.1.0)
 
 - Prebuilt `v0.1.0` x86_64 release asset installed with `./install.sh --prebuilt`
   (no Rust toolchain used at install time); `niruamp --version` returns 0.1.0.
@@ -77,6 +77,32 @@ CPUs:
 This is the most representative measurement in this report: real playback,
 real capture and a real desktop session. Frontend cost is 4.6% of one logical
 CPU (of 24), not the much higher software-GL/Xvfb figure.
+
+## 0.2.0 local validation (Xvfb, NPLAY 1.7.1)
+
+- Tab traversal focuses custom controls with a visible ring; Enter opened
+  Settings from a focused titlebar button. Search typing did not trigger
+  transport shortcuts.
+- Drag-and-drop queue reorder changed `[02, 03, 04, …]` to `[03, 04, 02, …]`
+  through `queue.reorder` and updated the selected row.
+- The resize grip changed the undecorated window from 620×552 to 775×604 under
+  Xvfb without a WM.
+- Optional tray: under `dbus-run-session`, the service registered
+  `org.kde.StatusNotifierItem-<pid>-1`; minimize hid the window and a synthetic
+  SNI `Activate` call restored it. Actual NIRUBAR icon/menu rendering was not
+  live-tested because that desktop was shut down; it is the first thing to check
+  on the next boot.
+- With `ksni` available but no SNI watcher, the app continued normally; without
+  D-Bus, tray spawn fails softly and minimize falls back to a normal window.
+- CAVA smoothing was exercised with the labelled synthetic CAVA harness: bars
+  change between consecutive frames, are log-shaped, and ease in/out rather than
+  stepping.
+- Artwork test decodes a 1024×768 PNG to a 256×192 texture; the texture cache is
+  capped at 8.
+- Browser/search lists now use `show_rows` virtualization.
+- 0.2.0 was not measured on the 24-core Ryzen host because it was powered off
+  after the 0.1.0 validation. The 30 Hz visualization may cost more than the
+  0.1.0 10 Hz measurement below; that remains to be measured on real hardware.
 
 ## Functional evidence
 
@@ -191,6 +217,9 @@ Interpretation:
       than fake; CAVA unavailable state is explicit.
 - [x] Layout checks at 800×600, 1366×768, 1920×1080 and 1.5× scaling; HiDPI
       mixed-monitor testing remains unverified.
+- [x] Keyboard focus/Tab+Enter, queue drag reorder, resize grip, browser
+      virtualization, artwork downscaling and tray hide/restore verified in the
+      0.2.0 local pass. Real NIRUBAR tray rendering remains for the owner's desktop.
 - [x] Resource measurements for idle, paused, playing, visualization harness and
       a 2,006-track library; minimized/obscured and real-CAVA/hardware-GPU
       measurements remain unverified.

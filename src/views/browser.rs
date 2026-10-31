@@ -271,86 +271,124 @@ impl NiruampApp {
         let row_h = s(22.0);
         let scroll = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
         let mut scroll_ui = ui.child_ui(scroll, egui::Layout::top_down(egui::Align::Min), None);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(&mut scroll_ui, |ui| {
-                if !self.browser.groups.is_empty() {
-                    let groups = self.browser.groups.clone();
-                    let mut flat = 0usize;
-                    for group in &groups {
-                        let header = Rect::from_min_size(
-                            ui.cursor().min,
-                            vec2(ui.available_width(), header_h),
-                        );
-                        let label =
-                            format!("{} · {}", group.label.to_uppercase(), group.items.len());
-                        ui.painter().text(
-                            pos2(header.left() + s(2.0), header.center().y),
-                            Align2::LEFT_CENTER,
-                            label,
-                            FontId::proportional(s(9.0)),
-                            p.muted,
-                        );
-                        let mut ax = header.right() - s(50.0);
-                        if !group.items.is_empty() {
-                            if mini_action(
-                                ui,
-                                Rect::from_center_size(
-                                    pos2(ax, header.center().y),
-                                    vec2(s(46.0), s(16.0)),
-                                ),
-                                "PLAY ALL",
-                                &p,
-                            ) {
-                                self.play_group(&group.items, 0);
+        if !self.browser.groups.is_empty() {
+            #[derive(Clone, Copy)]
+            enum SearchRow {
+                Header(usize),
+                Track {
+                    group: usize,
+                    item: usize,
+                    index: usize,
+                },
+            }
+            let groups = self.browser.groups.clone();
+            let mut rows = Vec::new();
+            let mut index = 0usize;
+            for (gi, group) in groups.iter().enumerate() {
+                rows.push(SearchRow::Header(gi));
+                for (ii, _) in group.items.iter().enumerate() {
+                    rows.push(SearchRow::Track {
+                        group: gi,
+                        item: ii,
+                        index,
+                    });
+                    index += 1;
+                }
+            }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(&mut scroll_ui, row_h, rows.len(), |ui, range| {
+                    for row_index in range {
+                        match rows[row_index] {
+                            SearchRow::Header(gi) => {
+                                let group = &groups[gi];
+                                let (header, _) = ui.allocate_exact_size(
+                                    vec2(ui.available_width(), row_h),
+                                    Sense::hover(),
+                                );
+                                let suffix = if group.items.is_empty() {
+                                    " · no matches"
+                                } else {
+                                    ""
+                                };
+                                let label = format!(
+                                    "{} · {}{}",
+                                    group.label.to_uppercase(),
+                                    group.items.len(),
+                                    suffix
+                                );
+                                ui.painter().text(
+                                    pos2(header.left() + s(2.0), header.center().y),
+                                    Align2::LEFT_CENTER,
+                                    label,
+                                    FontId::proportional(s(9.0)),
+                                    p.muted,
+                                );
+                                if !group.items.is_empty() {
+                                    let mut ax = header.right() - s(50.0);
+                                    if mini_action(
+                                        ui,
+                                        Rect::from_center_size(
+                                            pos2(ax, header.center().y),
+                                            vec2(s(46.0), s(16.0)),
+                                        ),
+                                        "PLAY ALL",
+                                        &p,
+                                    ) {
+                                        self.play_group(&group.items, 0);
+                                    }
+                                    ax -= s(52.0);
+                                    if mini_action(
+                                        ui,
+                                        Rect::from_center_size(
+                                            pos2(ax, header.center().y),
+                                            vec2(s(46.0), s(16.0)),
+                                        ),
+                                        "QUEUE ALL",
+                                        &p,
+                                    ) {
+                                        self.queue_add_many(&group.items, false);
+                                    }
+                                }
                             }
-                            ax -= s(52.0);
-                            if mini_action(
-                                ui,
-                                Rect::from_center_size(
-                                    pos2(ax, header.center().y),
-                                    vec2(s(46.0), s(16.0)),
-                                ),
-                                "QUEUE ALL",
-                                &p,
-                            ) {
-                                self.queue_add_many(&group.items, false);
+                            SearchRow::Track { group, item, index } => {
+                                let group = &groups[group];
+                                let track = &group.items[item];
+                                let selected = self.browser.selected == index;
+                                let current =
+                                    self.playback.current_key() == Some(track.key.as_str());
+                                let outcome = track_row(
+                                    self,
+                                    ui,
+                                    track,
+                                    &format!("{:>2}", item + 1),
+                                    selected,
+                                    current,
+                                    row_h,
+                                    true,
+                                    false,
+                                );
+                                if outcome.clicked {
+                                    self.browser.selected = index;
+                                }
+                                if self.keyboard_nav && selected {
+                                    ui.scroll_to_rect(outcome.rect, Some(egui::Align::Center));
+                                }
+                                if let Some(action) = outcome.action {
+                                    self.apply_row_action(action, &group.items, item, false, ctx);
+                                }
                             }
                         }
-                        ui.add_space(header_h + s(1.0));
-                        if group.items.is_empty() {
-                            ui.label(RichText::new("No matches").size(s(9.0)).color(p.disabled));
-                            continue;
-                        }
-                        for (i, track) in group.items.iter().enumerate() {
-                            let selected = self.browser.selected == flat;
-                            let current = self.playback.current_key() == Some(track.key.as_str());
-                            let outcome = track_row(
-                                self,
-                                ui,
-                                track,
-                                &format!("{:>2}", i + 1),
-                                selected,
-                                current,
-                                row_h,
-                                true,
-                            );
-                            if outcome.clicked {
-                                self.browser.selected = flat;
-                            }
-                            if self.keyboard_nav && selected {
-                                ui.scroll_to_rect(outcome.rect, Some(egui::Align::Center));
-                            }
-                            if let Some(action) = outcome.action {
-                                self.apply_row_action(action, &group.items, i, false, ctx);
-                            }
-                            flat += 1;
-                        }
-                        ui.add_space(s(4.0));
                     }
-                } else {
-                    let tracks = self.browser.items.clone();
-                    for (i, track) in tracks.iter().enumerate() {
+                });
+        } else {
+            let tracks = self.browser.items.clone();
+            let total = tracks.len();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(&mut scroll_ui, row_h, total, |ui, range| {
+                    for i in range {
+                        let track = &tracks[i];
                         let selected = self.browser.selected == i;
                         let current = self.playback.current_key() == Some(track.key.as_str());
                         let outcome = track_row(
@@ -362,6 +400,7 @@ impl NiruampApp {
                             current,
                             row_h,
                             true,
+                            false,
                         );
                         if outcome.clicked {
                             self.browser.selected = i;
@@ -373,8 +412,8 @@ impl NiruampApp {
                             self.apply_row_action(action, &tracks, i, false, ctx);
                         }
                     }
-                }
-            });
+                });
+        }
         self.keyboard_nav = false;
     }
 
@@ -501,7 +540,8 @@ impl NiruampApp {
                     FontId::proportional(s(8.0)),
                     p.muted,
                 );
-                if resp.clicked() {
+                resp.draw_focus(ui.painter(), rect, &p);
+                if resp.activated(ui) {
                     clicked = Some((source, section));
                 }
             }
@@ -542,7 +582,8 @@ fn small_icon(ui: &mut Ui, rect: Rect, icon: Icon, tip: &str, p: &crate::theme::
             p.muted
         },
     );
-    let clicked = resp.clicked();
+    resp.draw_focus(ui.painter(), rect, p);
+    let clicked = resp.activated(ui);
     let _ = resp.on_hover_text(tip);
     clicked
 }
@@ -561,6 +602,7 @@ fn mini_action(ui: &mut Ui, rect: Rect, label: &str, p: &crate::theme::Palette) 
         p.surface
     };
     bevel_rect(ui.painter(), rect, fill, p);
+    resp.draw_focus(ui.painter(), rect, p);
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -568,5 +610,5 @@ fn mini_action(ui: &mut Ui, rect: Rect, label: &str, p: &crate::theme::Palette) 
         FontId::proportional(rect.height() * 0.46),
         if resp.hovered() { p.accent } else { p.muted },
     );
-    resp.clicked()
+    resp.activated(ui)
 }
