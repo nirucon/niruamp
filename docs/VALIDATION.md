@@ -1,7 +1,7 @@
 # NIRUAMP validation report
 
 Date: 2026-10-31
-Frontend: NIRUAMP 0.3.2, commit `e1e9bc2`, tag `v0.3.2` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
+Frontend: NIRUAMP 0.3.3, tag `v0.3.3` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
 Backend: NPLAY 1.7.3, control protocol 1
 Target: NIRUX / X11 and non-NIRUX Linux desktops
 
@@ -19,7 +19,7 @@ Target: NIRUX / X11 and non-NIRUX Linux desktops
 | Rust | rustc/cargo 1.99.1 |
 | Python | 3.12.3 |
 | NPLAY revision | `2cfaa4c` (release: NPLAY 1.7.3 CAVA recovery) |
-| Release asset | `niruamp-0.3.2-x86_64-linux-gnu.tar.gz`, SHA-256 `ba7d5163f0cc1d5d485d12257947a0170aa476a394f5e68928015e5ce1bc97d1` (Debian 12 build) |
+| Release asset | `niruamp-0.3.3-x86_64-linux-gnu.tar.gz`, SHA-256 `ba7d5163f0cc1d5d485d12257947a0170aa476a394f5e68928015e5ce1bc97d1` (Debian 12 build) |
 | Live target | `niruxwork`, Debian 13.7 (trixie), kernel 7.2.11+deb13-amd64, AMD Ryzen AI 9 HX PRO 375, 24 logical CPUs, 62 GiB RAM, Radeon 880M/890M, X11/NIRUX |
 
 The owner supplied a Tailscale/SSH target (`niruxwork`) late in the pass. Live

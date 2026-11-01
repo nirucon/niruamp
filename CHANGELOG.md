@@ -1,3 +1,13 @@
+# NIRUAMP 0.3.3
+
+- Add a distraction-free fullscreen visual mode: black screen, centred track,
+  artist and album text, themed CAVA bars, progress/time and an English
+  "Press Esc or F11 to close fullscreen" hint.
+- Open it from the title-bar fullscreen button or F11; close with Esc or F11.
+  The normal visualizer preference is not changed; fullscreen always requests
+  CAVA while it is open.
+- Requires NPLAY 1.7.3.
+
 # NIRUAMP 0.3.2
 
 - Recover from a transient CAVA startup/exit failure: visualization failures now

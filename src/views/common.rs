@@ -56,6 +56,7 @@ pub enum Icon {
     Clock,
     Queue,
     Refresh,
+    Fullscreen,
 }
 
 pub fn fmt_time(seconds: f64) -> String {
@@ -597,6 +598,19 @@ pub fn draw_icon(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
             painter.circle_stroke(c, w.min(h) * 0.38, stroke);
             painter.line_segment([c, pos2(c.x, c.y - h * 0.20)], stroke);
             painter.line_segment([c, pos2(c.x + w * 0.15, c.y + h * 0.06)], stroke);
+        }
+        Icon::Fullscreen => {
+            let r = rect.shrink2(vec2(w * 0.18, h * 0.18));
+            let arm = w.min(h) * 0.22;
+            for (corner, dx, dy) in [
+                (r.left_top(), 1.0, 1.0),
+                (r.right_top(), -1.0, 1.0),
+                (r.left_bottom(), 1.0, -1.0),
+                (r.right_bottom(), -1.0, -1.0),
+            ] {
+                painter.line_segment([corner, corner + vec2(arm * dx, 0.0)], stroke);
+                painter.line_segment([corner, corner + vec2(0.0, arm * dy)], stroke);
+            }
         }
         Icon::Refresh => {
             let r = w.min(h) * 0.34;

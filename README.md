@@ -37,6 +37,9 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 - Winamp-style deck with original vector artwork, LED clock, seek/volume,
   grouped transport, shuffle/repeat, playlist and queue panels.
 - Windowshade mode, always-on-top, custom compact titlebar, remembered geometry.
+- Fullscreen visual mode: black screen, centred track/artist/album, themed
+  CAVA bars, progress and an English close hint. Open it with the title-bar
+  fullscreen button or `F11`; close it with `Esc` or `F11`.
 - Optional theme-aware SNI system tray: minimize to tray, show/play/next/previous/
   quit menu, middle-click play/pause and scroll-wheel volume. The framed play
   icon follows the active NIRUX palette.
@@ -91,7 +94,7 @@ The prebuilt archive is built in Debian 12 for x86_64 and needs
 `libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
 
 ```sh
-tar -xzf niruamp-0.3.2-x86_64-linux-gnu.tar.gz
+tar -xzf niruamp-0.3.3-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 
@@ -144,6 +147,8 @@ nplay --serve --service-socket /path/to/socket --idle-exit 25
 | F | Favorite current track |
 | 1–5 | Playlist / queue / browse / settings / about |
 | W / T | Windowshade / always-on-top |
+| F11 | Fullscreen visual mode |
+| Esc | Leave fullscreen visual mode |
 | Tab / Shift+Tab | Move keyboard focus; Enter activates the focused control |
 | ↑ / ↓ | Move selection |
 | Alt+↑ / ↓ | Reorder queue |

@@ -264,6 +264,7 @@ pub struct NiruampApp {
     pub(crate) tray_error: Option<String>,
     pub(crate) hidden_to_tray: bool,
     pub(crate) startup_sound_done: bool,
+    pub(crate) immersive: bool,
 }
 
 impl NiruampApp {
@@ -385,6 +386,7 @@ impl NiruampApp {
             tray_error,
             hidden_to_tray: false,
             startup_sound_done: false,
+            immersive: false,
         };
         if let Some(b) = &app.backend {
             let c = ctx.clone();
@@ -1100,8 +1102,8 @@ impl NiruampApp {
     }
 
     fn maybe_visualization(&mut self, ctx: &Context) {
-        let visible = self.tab != Tab::Settings || self.prefs.show_visualization;
-        let should = self.prefs.show_visualization
+        let visible = self.immersive || self.tab != Tab::Settings || self.prefs.show_visualization;
+        let should = (self.prefs.show_visualization || self.immersive)
             && self.capabilities.visualization
             && visible
             && matches!(self.playback.status.as_str(), "playing" | "paused")
@@ -1995,6 +1997,14 @@ impl NiruampApp {
             }
             return;
         }
+        if ctx.input(|i| i.key_pressed(Key::F11)) {
+            self.toggle_immersive(ctx);
+            return;
+        }
+        if self.immersive && ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.toggle_immersive(ctx);
+            return;
+        }
         if self.modal.is_some() {
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
                 self.modal = None;
@@ -2616,10 +2626,14 @@ impl eframe::App for NiruampApp {
         self.handle_keys(ctx);
         self.text_input_active = false;
         self.advance_visualization();
-        self.draw_title_and_body(ctx);
-        self.draw_modal(ctx);
-        self.draw_toasts(ctx);
-        self.draw_screenshot_hook(ctx);
+        if self.immersive {
+            self.draw_immersive(ctx);
+        } else {
+            self.draw_title_and_body(ctx);
+            self.draw_modal(ctx);
+            self.draw_toasts(ctx);
+            self.draw_screenshot_hook(ctx);
+        }
         if self.playback.status == "playing" {
             // The LED shows whole seconds; one bounded clock tick per second is
             // enough and avoids a continuous repaint loop on software renderers.
@@ -2627,7 +2641,10 @@ impl eframe::App for NiruampApp {
         } else if self.playback.status == "loading" {
             ctx.request_repaint_after(Duration::from_millis(400));
         }
-        if self.vis.started && !self.reduce_motion && self.prefs.show_visualization {
+        if self.vis.started
+            && !self.reduce_motion
+            && (self.prefs.show_visualization || self.immersive)
+        {
             ctx.request_repaint_after(Duration::from_millis(33));
         }
         if !self.toasts.is_empty() {

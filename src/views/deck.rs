@@ -145,6 +145,7 @@ impl NiruampApp {
             (Icon::Minimize, "Minimize"),
             (Icon::Up, "Windowshade"),
             (Icon::Pin, "Always on top"),
+            (Icon::Fullscreen, "Fullscreen visual (F11)"),
             (Icon::Settings, "Settings"),
         ];
         for (icon, tip) in actions {
@@ -166,6 +167,7 @@ impl NiruampApp {
                     Icon::Minimize => self.hide_to_tray(ctx),
                     Icon::Down => self.toggle_shade(ctx),
                     Icon::Pin => self.toggle_pin(ctx),
+                    Icon::Fullscreen => self.toggle_immersive(ctx),
                     Icon::Settings => self.show_tab(Tab::Settings, ctx),
                     _ => {}
                 }
