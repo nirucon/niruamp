@@ -4,6 +4,7 @@
 //! best-effort: a missing D-Bus session or watcher must never prevent NIRUAMP
 //! from running. All menu actions are forwarded to the GUI thread over a small
 //! bounded command channel.
+use crate::theme::Palette;
 use egui::Context;
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{MenuItem, StandardItem};
@@ -26,6 +27,7 @@ pub struct TrayHandler {
     title: String,
     detail: String,
     playing: bool,
+    icon: Icon,
 }
 
 impl TrayHandler {
@@ -53,13 +55,13 @@ impl ksni::Tray for TrayHandler {
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
-        vec![tray_icon()]
+        vec![self.icon.clone()]
     }
 
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             icon_name: "niruamp".into(),
-            icon_pixmap: vec![tray_icon()],
+            icon_pixmap: vec![self.icon.clone()],
             title: self.title().to_owned(),
             description: self.detail.clone(),
         }
@@ -136,13 +138,15 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    pub fn spawn(tx: Sender<TrayCommand>, ctx: Context) -> Result<Self, String> {
+    pub fn spawn(tx: Sender<TrayCommand>, ctx: Context, palette: &Palette) -> Result<Self, String> {
+        let icon = tray_icon(palette);
         let handler = TrayHandler {
             tx,
             ctx,
             title: String::new(),
             detail: "NIRUAMP · NPLAY frontend".into(),
             playing: false,
+            icon: icon.clone(),
         };
         let inner = handler
             .assume_sni_available(true)
@@ -154,6 +158,11 @@ impl TrayHandle {
             detail: String::new(),
             playing: false,
         })
+    }
+
+    pub fn set_palette(&mut self, palette: &Palette) {
+        let icon = tray_icon(palette);
+        self.inner.update(move |tray| tray.icon = icon);
     }
 
     pub fn update(&mut self, title: &str, detail: &str, playing: bool) {
@@ -178,21 +187,23 @@ impl TrayHandle {
     }
 }
 
-/// Original 64×64 tray icon, ARGB32 network byte order.
-fn tray_icon() -> Icon {
+/// Theme-shaped 64×64 tray icon: a framed play mark, ARGB32 network byte order.
+fn tray_icon(palette: &Palette) -> Icon {
     let size = 64usize;
     let mut data = vec![0u8; size * size * 4];
-    let mut put = |x: usize, y: usize, rgba: [u8; 4]| {
+    let mut put = |x: usize, y: usize, c: egui::Color32| {
         let i = (y * size + x) * 4;
-        data[i] = rgba[3];
-        data[i + 1] = rgba[0];
-        data[i + 2] = rgba[1];
-        data[i + 3] = rgba[2];
+        data[i] = c.a();
+        data[i + 1] = c.r();
+        data[i + 2] = c.g();
+        data[i + 3] = c.b();
     };
+    let panel = palette.panel;
+    let border = palette.border_hi;
+    let mark = palette.led;
     for y in 0..size {
         for x in 0..size {
-            let edge = x < 3 || y < 3 || x >= size - 3 || y >= size - 3;
-            let radius = 9;
+            let radius = 10usize;
             let corner = (x < radius
                 && y < radius
                 && (radius - x).pow(2) + (radius - y).pow(2) > radius * radius)
@@ -209,32 +220,16 @@ fn tray_icon() -> Icon {
             if corner {
                 continue;
             }
-            let color = if edge {
-                [58, 61, 63, 255]
-            } else if y < 18 {
-                [38, 40, 42, 255]
-            } else if y >= size - 18 {
-                [16, 17, 18, 255]
-            } else {
-                [26, 28, 29, 255]
-            };
-            put(x, y, color);
+            let edge = x < 3 || y < 3 || x >= size - 3 || y >= size - 3;
+            put(x, y, if edge { border } else { panel });
         }
     }
-    // Amber play mark.
-    for y in 22..43 {
-        let span = (y as i32 - 22).min(42 - y as i32).max(0) as usize;
-        for x in 21..(21 + 4 + span) {
-            if x < size - 20 {
-                put(x, y, [214, 168, 95, 255]);
-            }
-        }
-    }
-    // Green spectrum/checkbox mark.
-    for (i, h) in [5usize, 9, 6, 11, 7, 4].into_iter().enumerate() {
-        for y in (size - 8 - h)..(size - 8) {
-            for x in (22 + i * 4)..(24 + i * 4) {
-                put(x, y, [142, 192, 124, 255]);
+    // A solid play triangle, centred inside the frame.
+    for y in 20..45 {
+        let span = (y as i32 - 20).min(44 - y as i32).max(0) as usize;
+        for x in 23..(23 + 5 + span) {
+            if x < size - 21 {
+                put(x, y, mark);
             }
         }
     }

@@ -168,6 +168,17 @@ impl NiruampApp {
                     self.prefs.show_visualization = visual;
                     self.update_prefs(ctx);
                 }
+                let mut startup_sound = self.prefs.startup_sound;
+                if ui
+                    .checkbox(
+                        &mut startup_sound,
+                        RichText::new("Startup sound").size(s(11.0)),
+                    )
+                    .changed()
+                {
+                    self.prefs.startup_sound = startup_sound;
+                    self.update_prefs(ctx);
+                }
                 let mut remaining = self.prefs.remaining_time;
                 if ui
                     .checkbox(

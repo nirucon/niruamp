@@ -941,13 +941,6 @@ pub fn logo(painter: &Painter, rect: Rect, palette: &Palette) {
     );
     let tri = Rect::from_center_size(r.center(), vec2(r.width() * 0.44, r.height() * 0.52));
     draw_icon(painter, Icon::Play, tri, palette.led);
-    painter.line_segment(
-        [
-            r.left_bottom() + vec2(3.0, -3.0),
-            r.right_bottom() + vec2(-3.0, -3.0),
-        ],
-        Stroke::new(1.0_f32, palette.vis),
-    );
 }
 
 pub fn section_label(ui: &mut Ui, text: &str, palette: &Palette) {

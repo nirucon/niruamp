@@ -10,7 +10,7 @@ and driven by one authoritative NPLAY playback engine.
 
 ## Status
 
-**0.2.0 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
+**0.3.0 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
 client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.1 or
 newer is required** and remains fully usable standalone.
 
@@ -27,8 +27,9 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 - Winamp-style deck with original vector artwork, LED clock, seek/volume,
   grouped transport, shuffle/repeat, playlist and queue panels.
 - Windowshade mode, always-on-top, custom compact titlebar, remembered geometry.
-- Optional SNI system tray: minimize to tray, show/play/next/previous/quit menu,
-  middle-click play/pause and scroll-wheel volume.
+- Optional theme-aware SNI system tray: minimize to tray, show/play/next/previous/
+  quit menu, middle-click play/pause and scroll-wheel volume. The framed play
+  icon follows the active NIRUX palette.
 - Async federated search with stale-result protection: local, Navidrome,
   Sveriges Radio, YouTube, Spotify and custom radio when configured.
 - Browse local artists/albums/folders, playlists, favorites, history, radio,
@@ -40,6 +41,8 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
   sparse `appearance.toml`) with live reload and a standalone classic fallback.
 - Real CAVA visualization with 30 Hz sampling, fast-attack/slow-release
   smoothing and log-shaped bars; an honest unavailable state otherwise.
+- Optional Winamp-inspired startup sound (Ogg Vorbis, embedded) that is a UI
+  effect only and can be disabled in Settings.
 - One backend session, one queue, one MPRIS owner and one statistics pipeline.
 
 ## Requirements
@@ -75,7 +78,7 @@ The prebuilt archive is built in Debian 12 for x86_64 and needs
 `libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
 
 ```sh
-tar -xzf niruamp-0.2.0-x86_64-linux-gnu.tar.gz
+tar -xzf niruamp-0.3.0-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 
@@ -187,7 +190,8 @@ and appearance changes apply live after a debounce.
 - Live radio cannot seek; Spotify EQ and some source-specific operations remain
   backend limitations, surfaced as disabled states.
 - Tray support is optional and best-effort. Without a D-Bus StatusNotifierItem
-  host, minimize falls back to a normal minimized window.
+  host, minimize falls back to a normal minimized window. The tray icon follows
+  the active NIRUX palette.
 - “Keep playing” is an explicit NPLAY service ownership choice, not hidden
   background behavior.
 - Navidrome/Spotify credentials and OAuth stay in NPLAY's `0600` secrets file.

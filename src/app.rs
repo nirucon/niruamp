@@ -248,6 +248,7 @@ pub struct NiruampApp {
     pub(crate) tray_rx: Receiver<TrayCommand>,
     pub(crate) tray_error: Option<String>,
     pub(crate) hidden_to_tray: bool,
+    pub(crate) startup_sound_done: bool,
 }
 
 impl NiruampApp {
@@ -286,7 +287,7 @@ impl NiruampApp {
         let tab = Tab::from_key(&prefs.active_tab);
         let (tray_tx, tray_rx) = mpsc::channel();
         let (tray, tray_error) = if prefs.tray_enabled {
-            match TrayHandle::spawn(tray_tx, ctx.clone()) {
+            match TrayHandle::spawn(tray_tx, ctx.clone(), &theme.palette) {
                 Ok(tray) => (Some(tray), None),
                 Err(e) => {
                     eprintln!("niruamp: system tray unavailable: {e}");
@@ -368,6 +369,7 @@ impl NiruampApp {
             tray_rx,
             tray_error,
             hidden_to_tray: false,
+            startup_sound_done: false,
         };
         if let Some(b) = &app.backend {
             let c = ctx.clone();
@@ -624,6 +626,7 @@ impl NiruampApp {
                     self.theme = *theme;
                     theme::install_style(ctx, &self.theme, &self.prefs);
                     self.reduce_motion = theme::reduced_motion(&self.theme, &self.prefs);
+                    self.refresh_tray_icon();
                     self.theme_warning.clear();
                 }
                 ThemeEvent::Warning(msg) => {
@@ -964,6 +967,13 @@ impl NiruampApp {
         tray.update(&title, &detail, self.playback.is_playing());
     }
 
+    fn refresh_tray_icon(&mut self) {
+        let palette = self.theme.palette;
+        if let Some(tray) = self.tray.as_mut() {
+            tray.set_palette(&palette);
+        }
+    }
+
     fn drain_tray(&mut self, ctx: &Context) {
         let mut commands = Vec::new();
         while let Ok(command) = self.tray_rx.try_recv() {
@@ -1006,10 +1016,11 @@ impl NiruampApp {
         self.prefs.tray_enabled = enabled;
         if enabled && self.tray.is_none() {
             let (tx, rx) = mpsc::channel();
-            match TrayHandle::spawn(tx, ctx.clone()) {
+            match TrayHandle::spawn(tx, ctx.clone(), &self.theme.palette) {
                 Ok(tray) => {
                     self.tray = Some(tray);
                     self.tray_error = None;
+                    self.refresh_tray_icon();
                     self.refresh_tray();
                 }
                 Err(e) => {
@@ -1194,6 +1205,7 @@ impl NiruampApp {
                 self.theme = theme;
                 theme::install_style(ctx, &self.theme, &self.prefs);
                 self.reduce_motion = theme::reduced_motion(&self.theme, &self.prefs);
+                self.refresh_tray_icon();
                 self.theme_warning.clear();
             }
             Err(e) => self.toast(format!("Theme not applied: {e}"), true),
@@ -2414,6 +2426,12 @@ impl eframe::App for NiruampApp {
         }
         if self.screenshot_path.is_some() {
             ctx.request_repaint();
+        }
+        if !self.startup_sound_done {
+            self.startup_sound_done = true;
+            if self.prefs.startup_sound {
+                crate::sound::play_startup();
+            }
         }
     }
 

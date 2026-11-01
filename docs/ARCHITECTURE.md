@@ -83,7 +83,9 @@ selection or steal text focus.
 - A bottom-right grip resizes the undecorated window.
 - An optional StatusNotifierItem tray lives on its own D-Bus thread. Menu
   actions cross a bounded channel to the GUI thread; the GUI never blocks on
-  D-Bus. Hiding to tray suspends visualization and stops CAVA delivery.
+  D-Bus. Hiding to tray suspends visualization and stops CAVA delivery. The
+  framed play icon is generated from the active palette and refreshed on theme
+  changes.
 - Artwork decoding/downscaling runs in a worker thread to at most 256×256;
   textures are capped at 8 entries. The backend artwork cache is bounded
   separately.
@@ -139,6 +141,15 @@ NIRUX colour overrides.
   read or URL fetch is exposed.
 - Credentials/OAuth live only in NPLAY's 0600 secrets file and never appear in
   protocol responses, logs or the GUI.
+
+## Startup sound
+
+The optional startup sound is a one-shot UI effect, not media. The Ogg Vorbis
+asset is embedded in the frontend, written once to the user cache and played by
+`pw-play`, `paplay`, `ffplay` or `mpv` for its short duration. It never enters
+NPLAY's queue, statistics, MPRIS or playback state and can be disabled in
+Settings. This avoids introducing a second media engine or a persistent audio
+helper.
 
 ## Deliberate tradeoffs
 

@@ -32,6 +32,13 @@ pub fn data_home() -> PathBuf {
         .unwrap_or_else(|| home().join(".local/share"))
 }
 
+pub fn cache_home() -> PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| home().join(".cache"))
+}
+
 pub fn runtime_home() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -72,6 +79,7 @@ pub struct Preferences {
     pub always_on_top: bool,
     pub keep_playing: bool,
     pub show_visualization: bool,
+    pub startup_sound: bool,
     pub tray_enabled: bool,
     /// `None` follows the NIRUX motion setting.
     pub reduced_motion: Option<bool>,
@@ -90,6 +98,7 @@ impl Default for Preferences {
             always_on_top: false,
             keep_playing: false,
             show_visualization: true,
+            startup_sound: true,
             tray_enabled: true,
             reduced_motion: None,
             remaining_time: false,

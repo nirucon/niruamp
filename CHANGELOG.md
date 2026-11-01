@@ -1,3 +1,14 @@
+# NIRUAMP 0.3.0
+
+- NIRUX-theme-aware tray icon: the framed play mark follows the active theme's
+  panel, border and LED/accent colours and updates live with the theme watcher.
+- Optional Winamp-inspired startup sound, embedded as Ogg Vorbis and played once
+  through PipeWire/PulseAudio/FFplay/mpv. It is a UI effect only, never NPLAY
+  media, and can be disabled under Settings → Appearance.
+- The logo beside the NIRUAMP name is now just a play mark inside a frame.
+- Remaining resource work is bounded-cache/virtualization/event-driven redraw;
+  a second in-frontend CAVA is intentionally not implemented.
+
 # NIRUAMP 0.2.0
 
 - Keyboard focus/tab navigation for custom controls; Enter activates the

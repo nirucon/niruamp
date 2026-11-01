@@ -1,7 +1,7 @@
 # NIRUAMP validation report
 
 Date: 2026-10-31
-Frontend: NIRUAMP 0.2.0, commit `25e1a47` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
+Frontend: NIRUAMP 0.3.0 (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
 Backend: NPLAY 1.7.1, control protocol 1
 Target: NIRUX / X11 and non-NIRUX Linux desktops
 
@@ -33,7 +33,7 @@ results were fabricated; Spotify/YouTube accounts remained unavailable.
 |---|---|
 | Rust format (`cargo fmt --all -- --check`) | pass |
 | Rust clippy (`cargo clippy --all-targets -- -D warnings`) | pass |
-| Rust unit tests (`cargo test`) | **17 passed** |
+| Rust unit tests (`cargo test`) | **18 passed** |
 | Rust release build (`cargo build --release --locked`) | pass |
 | NPLAY full Python suite (`python3 -m unittest discover -s tests`) | **81 passed** (68 pre-existing + 13 service) |
 | NPLAY service tests | handshake, events, playlists, queue, bulk queue, external queueing, artwork redaction, malformed/oversized frames, permissions, second service, graceful shutdown, idle exit, local playback via real `Player` boundary with mpv IPC harness |
@@ -114,6 +114,24 @@ CPU (of 24), not the much higher software-GL/Xvfb figure.
   **2.397% / 49.1 MiB**, mpv **2.764% / 108.2 MiB**, cava **1.698% / 15.8 MiB**.
   The higher frontend/backend cost than 0.1.0 is the requested 30 Hz CAVA polling
   and is still well below one of the 24 logical CPUs.
+
+## 0.3.0 local validation
+
+- The owner-supplied MP3 was converted to Ogg Vorbis (48 kHz stereo, 4.51 s,
+  76 KiB) and embedded in the binary. The sound is a one-shot UI effect with a
+  settings toggle; it is written atomically to the user cache and played through
+  `pw-play`, `paplay`, `ffplay` or `mpv` with fallback if a player fails.
+- The tray icon is generated from the active palette (panel/border/LED colours)
+  and refreshed by both manual theme reloads and the live NIRUX watcher. There
+  is no hard-coded amber/green tray asset any more.
+- The titlebar logo is now only a play triangle inside a frame; the underline was
+  removed.
+- A second in-frontend CAVA was deliberately rejected: it would duplicate audio
+  capture/DSP, break the NPLAY boundary, and would not remove the dominant cost
+  (full-window redraw). The existing CAVA path remains.
+- `cargo fmt`, clippy and 18 Rust tests pass; NPLAY remains 1.7.1.
+- Live tray-colour and startup-sound verification on niruxwork is performed after
+  installing this build.
 
 ## Functional evidence
 
