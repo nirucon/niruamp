@@ -20,8 +20,8 @@ standalone terminal player and continues to work without NIRUX or NIRUAMP.
 
 ## Status
 
-**0.3.1 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
-client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.2 or
+**0.3.2 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
+client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.3 or
 newer is required** and remains fully usable standalone.
 
 The repository includes the frontend, the NPLAY headless service changes and
@@ -62,7 +62,7 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 
 - Linux with X11 or XWayland. The UI uses `eframe`/`egui` with the Glow renderer.
   Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0; current releases require NPLAY 1.7.2.
-- **NPLAY 1.7.2+** with its normal runtime prerequisites (`mpv`, Python 3).
+- **NPLAY 1.7.3+** with its normal runtime prerequisites (`mpv`, Python 3).
 - Rust 1.75+ to build.
 - Optional: `cava` (visualization), `yt-dlp` (YouTube), `librespot` (Spotify
   local playback), Navidrome credentials, Spotify Premium for Connect playback.
@@ -91,7 +91,7 @@ The prebuilt archive is built in Debian 12 for x86_64 and needs
 `libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
 
 ```sh
-tar -xzf niruamp-0.3.1-x86_64-linux-gnu.tar.gz
+tar -xzf niruamp-0.3.2-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 

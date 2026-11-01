@@ -134,6 +134,7 @@ pub(crate) struct VisState {
     /// Display easing between samples (fast attack, slower release).
     pub(crate) displayed: Vec<f32>,
     pub(crate) failed: String,
+    pub(crate) retry_at: Option<Instant>,
     pub(crate) last_poll: Instant,
     pub(crate) last_step: Instant,
     pub(crate) stop_sent: bool,
@@ -148,6 +149,7 @@ impl Default for VisState {
             target: Vec::new(),
             displayed: Vec::new(),
             failed: String::new(),
+            retry_at: None,
             last_poll: Instant::now() - Duration::from_secs(10),
             last_step: Instant::now(),
             stop_sent: true,
@@ -428,6 +430,8 @@ impl NiruampApp {
         self.snapshot = snap;
         self.received_at = Instant::now();
         self.pending_play = None;
+        self.vis.failed.clear();
+        self.vis.retry_at = None;
         self.update_artwork(ctx);
         self.clamp_selection();
     }
@@ -672,8 +676,13 @@ impl NiruampApp {
                         if change.revision < self.revision {
                             return;
                         }
+                        let previous_key = self.playback.current_key().map(str::to_string);
                         self.revision = change.revision;
                         self.playback = change.playback;
+                        if previous_key != self.playback.current_key().map(str::to_string) {
+                            self.vis.failed.clear();
+                            self.vis.retry_at = None;
+                        }
                         if !change.sources.is_empty() {
                             self.sources = change.sources;
                         }
@@ -839,6 +848,7 @@ impl NiruampApp {
                 self.vis.requested_start = false;
                 self.vis.inflight = false;
                 self.vis.failed.clear();
+                self.vis.retry_at = None;
                 self.vis.stop_sent = false;
             }
             (PendingKind::VisData, Ok(value)) => {
@@ -926,6 +936,8 @@ impl NiruampApp {
                         self.vis.inflight = false;
                         self.vis.requested_start = false;
                         self.vis.failed = err.to_string();
+                        self.vis.retry_at = Some(Instant::now() + Duration::from_secs(4));
+                        ctx.request_repaint_after(Duration::from_secs(4));
                         String::new()
                     }
                     PendingKind::Artwork { key } => {
@@ -1095,6 +1107,12 @@ impl NiruampApp {
             && matches!(self.playback.status.as_str(), "playing" | "paused")
             && !self.hidden_to_tray
             && !ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        if !should {
+            self.vis.retry_at = None;
+        } else if self.vis.retry_at.is_some_and(|at| Instant::now() >= at) {
+            self.vis.failed.clear();
+            self.vis.retry_at = None;
+        }
         if should && !self.vis.started && !self.vis.requested_start && self.vis.failed.is_empty() {
             self.vis.requested_start = true;
             self.vis.stop_sent = false;

@@ -166,6 +166,10 @@ impl NiruampApp {
                     .changed()
                 {
                     self.prefs.show_visualization = visual;
+                    if visual {
+                        self.vis.failed.clear();
+                        self.vis.retry_at = None;
+                    }
                     self.update_prefs(ctx);
                 }
                 let mut startup_sound = self.prefs.startup_sound;

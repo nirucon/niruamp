@@ -1,8 +1,7 @@
 # NPLAY local control protocol (version 1)
 
 > Canonical backend document: `nplay/docs/PROTOCOL.md`. This copy travels with
-> NIRUAMP. NIRUAMP 0.3.1 requires NPLAY **1.7.2** and protocol **1**. Container
-> rows must be expanded through `browse` before playback/queue/playlist actions.
+> NIRUAMP. NIRUAMP 0.3.2 requires NPLAY **1.7.3** and protocol **1**.
 
 NPLAY 1.7.0 adds a headless control service for graphical clients such as
 NIRUAMP. The terminal player is unchanged and does not require the service, a
@@ -222,5 +221,5 @@ requests, `-32010` incompatible protocol. Error `data` may include a bounded
 ## Minimum versions
 
 - Protocol version: `1`
-- NPLAY minimum: `1.7.2`
-- NIRUAMP minimum: `0.3.1`
+- NPLAY minimum: `1.7.3`
+- NIRUAMP minimum: `0.3.2`

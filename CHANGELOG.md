@@ -1,3 +1,11 @@
+# NIRUAMP 0.3.2
+
+- Recover from a transient CAVA startup/exit failure: visualization failures now
+  retry every few seconds, on track change, after reconnect, and when the user
+  re-enables the visualizer instead of staying stuck on “VISUALIZER UNAVAILABLE”.
+- Requires NPLAY 1.7.3, which reports CAVA start failures accurately and restarts
+  CAVA after an unexpected exit.
+
 # NIRUAMP 0.3.1
 
 - Fix album/playlist/folder/programme context actions: Play, Play next,
