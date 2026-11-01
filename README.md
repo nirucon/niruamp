@@ -8,6 +8,16 @@ and driven by one authoritative NPLAY playback engine.
 
 ![NIRUAMP player deck](docs/screenshots/main.png)
 
+## Relationship to NIRUX and NPLAY
+
+NIRUAMP is an optional member of the **NIRUX** suite (`nirux extras install
+niruamp`). It is only the graphical presentation and interaction layer.
+
+**NIRUAMP cannot run standalone.** [NPLAY](https://github.com/nirucon/nplay)
+1.7.1 or newer is a required runtime dependency and owns playback, queue,
+providers, library, statistics, notifications and MPRIS. NPLAY is a complete
+standalone terminal player and continues to work without NIRUX or NIRUAMP.
+
 ## Status
 
 **0.3.0 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
