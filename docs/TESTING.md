@@ -76,12 +76,17 @@ Useful checks:
    focused control. Typing in search must not trigger transport shortcuts.
 8. In Queue, drag a row to another position and verify the order changes through
    `queue.reorder`.
-9. Drag the bottom-right resize grip and verify the undecorated window resizes.
-10. Minimize to the tray (NIRUX/NIRUBAR SNI host), restore by clicking the icon,
+9. Browse Local → Albums, right-click an album and exercise Play album, Play
+   album next, Add album to queue, Open album, Add album to playlist and New
+   playlist. The queue/context/playlist must contain the album's tracks, never
+   the album row itself. Repeat for an artist (Open only), a playlist/folder/
+   programme, and a Spotify device (Connect only).
+10. Drag the bottom-right resize grip and verify the undecorated window resizes.
+11. Minimize to the tray (NIRUX/NIRUBAR SNI host), restore by clicking the icon,
     and exercise play/pause, next/previous and quit from the tray menu. Without a
     tray host, minimize must fall back to a normal minimized window. Change the
     NIRUX theme and verify the tray icon colours follow it.
-11. Launch with the startup sound enabled and verify one short sound; disable it
+12. Launch with the startup sound enabled and verify one short sound; disable it
     under Settings → Appearance and verify the next launch is silent.
 7. Stop NPLAY (`kill` the service) and verify the connection-lost screen;
    press Retry and verify a fresh service connects.

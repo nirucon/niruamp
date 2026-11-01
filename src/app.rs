@@ -176,13 +176,26 @@ pub(crate) enum PendingKind {
     Play,
     Snapshot,
     Devices,
-    PlaylistCreated { track: Option<Track> },
+    PlaylistCreated { tracks: Vec<Track> },
+    Expansion { action: ExpandAction, label: String },
     Generic { label: String, quiet: bool },
+}
+
+pub(crate) enum ExpandAction {
+    Play,
+    Queue,
+    PlayNext,
+    AddToPlaylist(i64, String),
+    NewPlaylist,
 }
 
 pub(crate) struct Pending {
     pub(crate) kind: PendingKind,
     pub(crate) started: Instant,
+}
+
+pub(crate) fn playable_items(items: &[Track]) -> Vec<Track> {
+    items.iter().filter(|t| t.is_track()).cloned().collect()
 }
 
 pub(crate) struct QueuedPlaylistRequest {
@@ -218,7 +231,7 @@ pub struct NiruampApp {
     pub(crate) toasts: VecDeque<Toast>,
     pub(crate) modal: Option<Modal>,
     pub(crate) playlists: Vec<PlaylistInfo>,
-    pub(crate) pending_new_playlist_track: Option<Track>,
+    pub(crate) pending_new_playlist_tracks: Vec<Track>,
     pub(crate) pending_play: Option<(String, String, Instant)>,
     pub(crate) scrub: Option<f64>,
     pub(crate) scrub_sent: Option<Instant>,
@@ -336,7 +349,7 @@ impl NiruampApp {
             toasts: VecDeque::new(),
             modal: None,
             playlists: Vec::new(),
-            pending_new_playlist_track: None,
+            pending_new_playlist_tracks: Vec::new(),
             pending_play: None,
             scrub: None,
             scrub_sent: None,
@@ -859,19 +872,26 @@ impl NiruampApp {
                     self.tab = Tab::Browse;
                 }
             }
-            (PendingKind::PlaylistCreated { track }, Ok(value)) => {
+            (PendingKind::PlaylistCreated { tracks }, Ok(value)) => {
                 if let Some(id) = value.get("id").and_then(Value::as_i64) {
-                    if let Some(track) = track {
+                    if !tracks.is_empty() {
+                        let count = tracks.len();
                         self.request(
-                            "playlists.add",
-                            json!({"id": id, "track": track}),
+                            "playlists.add_many",
+                            json!({"id": id, "tracks": tracks}),
                             Some(PendingKind::Generic {
-                                label: "Added to new playlist".into(),
+                                label: format!("Added {count} tracks to new playlist"),
                                 quiet: false,
                             }),
                         );
                     }
                     self.request("playlists.list", json!({}), Some(PendingKind::Playlists));
+                }
+            }
+            (PendingKind::Expansion { action, label }, Ok(value)) => {
+                match serde_json::from_value::<BrowseResponse>(value) {
+                    Ok(response) => self.apply_expansion(action, &response.items, &label),
+                    Err(e) => self.toast(format!("Cannot read {label}: {e}"), true),
                 }
             }
             (PendingKind::Generic { label, quiet }, Ok(_)) => {
@@ -921,6 +941,7 @@ impl NiruampApp {
                     PendingKind::Snapshot => "State refresh failed".to_string(),
                     PendingKind::Devices => "Spotify devices unavailable".to_string(),
                     PendingKind::PlaylistCreated { .. } => "Playlist creation failed".to_string(),
+                    PendingKind::Expansion { label, .. } => format!("{label} unavailable"),
                     PendingKind::Generic { label, .. } => label.clone(),
                 };
                 if !label.is_empty() {
@@ -1377,24 +1398,32 @@ impl NiruampApp {
     }
 
     pub(crate) fn play_group(&mut self, tracks: &[Track], index: usize) {
-        let Some(track) = tracks.get(index) else {
+        let Some(selected) = tracks.get(index).cloned() else {
             return;
         };
-        if !track.is_track() {
-            self.open_item(track);
+        if !selected.is_track() {
+            self.open_item(&selected);
             return;
         }
+        let playable = playable_items(tracks);
+        let position = playable
+            .iter()
+            .position(|t| t.key == selected.key)
+            .unwrap_or(0);
+        let Some(track) = playable.get(position).cloned() else {
+            return;
+        };
         self.playback.status = "loading".into();
         self.playback.current = Some(track.clone());
         self.playback.position = 0.0;
         self.playback.duration = track.duration;
-        self.playback.context = tracks.to_vec();
-        self.playback.context_index = index as i32;
+        self.playback.context = playable.clone();
+        self.playback.context_index = position as i32;
         self.received_at = Instant::now();
         self.pending_play = Some((track.key.clone(), track.title.clone(), Instant::now()));
         self.request(
             "playback.play",
-            json!({"track": track, "context": tracks, "index": index}),
+            json!({"track": track, "context": playable, "index": position}),
             Some(PendingKind::Play),
         );
     }
@@ -1433,6 +1462,15 @@ impl NiruampApp {
     }
 
     pub(crate) fn queue_add(&mut self, track: &Track, next: bool) {
+        if !track.is_track() {
+            let action = if next {
+                ExpandAction::PlayNext
+            } else {
+                ExpandAction::Queue
+            };
+            self.expand_container(track, action);
+            return;
+        }
         self.request(
             "queue.add",
             json!({"track": track, "next": next}),
@@ -1449,6 +1487,7 @@ impl NiruampApp {
     }
 
     pub(crate) fn queue_add_many(&mut self, tracks: &[Track], next: bool) {
+        let tracks = playable_items(tracks);
         if tracks.is_empty() {
             return;
         }
@@ -1680,7 +1719,159 @@ impl NiruampApp {
         self.browse("library", "playlists", "", json!({}));
     }
 
+    pub(crate) fn container_request(
+        &self,
+        track: &Track,
+    ) -> Option<(String, String, Value, String)> {
+        let meta = &track.meta;
+        let value = |key: &str| meta.get(key).and_then(Value::as_str).unwrap_or("");
+        let label = |noun: &str, title: &str| format!("{noun} · {title}");
+        match (track.source.as_str(), track.kind.as_str()) {
+            ("local", "album") => {
+                let artist = if !value("local_artist").is_empty() {
+                    value("local_artist").to_string()
+                } else {
+                    track.artist.clone()
+                };
+                let album = if !track.album.is_empty() {
+                    track.album.clone()
+                } else {
+                    track.title.clone()
+                };
+                Some((
+                    "local".into(),
+                    "album".into(),
+                    json!({"artist": artist, "album": album}),
+                    label("album", &album),
+                ))
+            }
+            ("local", "folder") => Some((
+                "local".into(),
+                "folder".into(),
+                json!({"path": track.id}),
+                label("folder", &track.title),
+            )),
+            ("navidrome", "album") => {
+                let id = if value("album_id").is_empty() {
+                    track.id.clone()
+                } else {
+                    value("album_id").to_string()
+                };
+                Some((
+                    "navidrome".into(),
+                    "album".into(),
+                    json!({"id": id}),
+                    label("album", &track.title),
+                ))
+            }
+            ("navidrome", "playlist") => {
+                let id = if value("playlist_id").is_empty() {
+                    track.id.clone()
+                } else {
+                    value("playlist_id").to_string()
+                };
+                Some((
+                    "navidrome".into(),
+                    "playlist".into(),
+                    json!({"id": id}),
+                    label("playlist", &track.title),
+                ))
+            }
+            ("spotify", "album") => Some((
+                "spotify".into(),
+                "album".into(),
+                json!({"id": track.id}),
+                label("album", &track.title),
+            )),
+            ("spotify", "playlist") => Some((
+                "spotify".into(),
+                "playlist".into(),
+                json!({"id": track.id}),
+                label("playlist", &track.title),
+            )),
+            ("sr", "program") => {
+                let id = if value("program_id").is_empty() {
+                    track.id.clone()
+                } else {
+                    value("program_id").to_string()
+                };
+                Some((
+                    "sr".into(),
+                    "program".into(),
+                    json!({"id": id}),
+                    label("programme", &track.title),
+                ))
+            }
+            ("library", "playlist") => {
+                let id = track.id.parse::<i64>().ok()?;
+                Some((
+                    "library".into(),
+                    "playlist".into(),
+                    json!({"id": id}),
+                    label("playlist", &track.title),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn expand_container(&mut self, track: &Track, action: ExpandAction) -> bool {
+        let Some((source, section, args, label)) = self.container_request(track) else {
+            self.toast(
+                format!(
+                    "Open this {} first; its tracks are resolved by NPLAY",
+                    track.kind
+                ),
+                true,
+            );
+            return false;
+        };
+        self.request(
+            "browse",
+            json!({"source": source, "section": section, "limit": 1000, "args": args}),
+            Some(PendingKind::Expansion { action, label }),
+        );
+        true
+    }
+
+    pub(crate) fn apply_expansion(&mut self, action: ExpandAction, items: &[Track], label: &str) {
+        let tracks = playable_items(items);
+        if tracks.is_empty() {
+            self.toast(format!("{label} has no playable tracks"), true);
+            return;
+        }
+        match action {
+            ExpandAction::Play => self.play_group(&tracks, 0),
+            ExpandAction::Queue => self.queue_add_many(&tracks, false),
+            ExpandAction::PlayNext => self.queue_add_many(&tracks, true),
+            ExpandAction::AddToPlaylist(id, name) => {
+                let count = tracks.len();
+                self.request(
+                    "playlists.add_many",
+                    json!({"id": id, "tracks": tracks}),
+                    Some(PendingKind::Generic {
+                        label: format!("Added {count} tracks to {name}"),
+                        quiet: false,
+                    }),
+                );
+            }
+            ExpandAction::NewPlaylist => {
+                self.pending_new_playlist_tracks = tracks;
+                self.modal = Some(Modal::NewPlaylist {
+                    name: String::new(),
+                });
+            }
+        }
+    }
+
     pub(crate) fn add_to_playlist(&mut self, track: &Track, playlist_id: i64, name: &str) {
+        if !track.is_track() {
+            self.expand_container(
+                track,
+                ExpandAction::AddToPlaylist(playlist_id, name.to_string()),
+            );
+            return;
+        }
         self.request(
             "playlists.add",
             json!({"id": playlist_id, "track": track}),
@@ -1691,17 +1882,21 @@ impl NiruampApp {
         );
     }
 
+    pub(crate) fn open_new_playlist(&mut self, track: Option<Track>) {
+        self.pending_new_playlist_tracks = track.into_iter().collect();
+        self.modal = Some(Modal::NewPlaylist {
+            name: String::new(),
+        });
+    }
+
     pub(crate) fn new_playlist(&mut self, name: String) {
         self.modal = None;
+        let tracks = std::mem::take(&mut self.pending_new_playlist_tracks);
         self.request(
             "playlists.create",
             json!({"name": name}),
-            Some(PendingKind::Generic {
-                label: "Playlist created".into(),
-                quiet: false,
-            }),
+            Some(PendingKind::PlaylistCreated { tracks }),
         );
-        self.request("playlists.list", json!({}), Some(PendingKind::Playlists));
     }
 
     pub(crate) fn favorite(&mut self, track: &Track) {
@@ -2181,7 +2376,7 @@ impl NiruampApp {
         self.text_input_active = text_focus;
         if close {
             if matches!(modal, Modal::NewPlaylist { .. }) {
-                self.pending_new_playlist_track = None;
+                self.pending_new_playlist_tracks.clear();
             }
             self.modal = None;
             return;

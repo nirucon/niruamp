@@ -1,5 +1,5 @@
 //! Playlist, queue and shared dense track rows.
-use crate::app::{NiruampApp, Tab};
+use crate::app::{ExpandAction, NiruampApp, Tab};
 use crate::model::Track;
 use crate::views::common::*;
 use egui::{pos2, vec2, Align2, Context, FontId, Id, Rect, RichText, Sense, Stroke, Ui};
@@ -8,6 +8,7 @@ pub(crate) enum RowAction {
     Play,
     PlayNext,
     Queue,
+    Open,
     Favorite,
     AddToPlaylist(i64, String),
     NewPlaylist,
@@ -144,48 +145,108 @@ pub(crate) fn track_row(
         rect,
     };
     let playlists = app.playlists.clone();
+    let playable = track.is_track();
+    let noun = match track.kind.as_str() {
+        "album" => "album",
+        "playlist" => "playlist",
+        "folder" => "folder",
+        "program" => "programme",
+        "artist" => "artist",
+        "device" => "device",
+        _ => "item",
+    };
     response.context_menu(|ui| {
         ui.set_min_width(app.s(190.0));
-        if ui.button("Play now").clicked() {
-            outcome.action = Some(RowAction::Play);
-            ui.close_menu();
-        }
-        if ui.button("Play next").clicked() {
-            outcome.action = Some(RowAction::PlayNext);
-            ui.close_menu();
-        }
-        if ui.button("Add to queue").clicked() {
-            outcome.action = Some(RowAction::Queue);
-            ui.close_menu();
-        }
-        ui.menu_button("Add to playlist", |ui| {
-            if playlists.is_empty() {
-                ui.label(RichText::new("No local playlists yet").color(p.muted));
-            }
-            for playlist in &playlists {
-                if ui.button(&playlist.name).clicked() {
-                    outcome.action =
-                        Some(RowAction::AddToPlaylist(playlist.id, playlist.name.clone()));
-                    ui.close_menu();
-                }
-            }
-            ui.separator();
-            if ui.button("New playlist…").clicked() {
-                outcome.action = Some(RowAction::NewPlaylist);
+        if playable {
+            if ui.button("Play now").clicked() {
+                outcome.action = Some(RowAction::Play);
                 ui.close_menu();
             }
-        });
-        if ui.button("Favorite").clicked() {
-            outcome.action = Some(RowAction::Favorite);
-            ui.close_menu();
+            if ui.button("Play next").clicked() {
+                outcome.action = Some(RowAction::PlayNext);
+                ui.close_menu();
+            }
+            if ui.button("Add to queue").clicked() {
+                outcome.action = Some(RowAction::Queue);
+                ui.close_menu();
+            }
+            ui.menu_button("Add to playlist", |ui| {
+                if playlists.is_empty() {
+                    ui.label(RichText::new("No local playlists yet").color(p.muted));
+                }
+                for playlist in &playlists {
+                    if ui.button(&playlist.name).clicked() {
+                        outcome.action =
+                            Some(RowAction::AddToPlaylist(playlist.id, playlist.name.clone()));
+                        ui.close_menu();
+                    }
+                }
+                ui.separator();
+                if ui.button("New playlist…").clicked() {
+                    outcome.action = Some(RowAction::NewPlaylist);
+                    ui.close_menu();
+                }
+            });
+            if ui.button("Favorite").clicked() {
+                outcome.action = Some(RowAction::Favorite);
+                ui.close_menu();
+            }
+        } else if track.kind == "artist" {
+            if ui.button("Open artist").clicked() {
+                outcome.action = Some(RowAction::Open);
+                ui.close_menu();
+            }
+        } else if track.kind == "device" {
+            if ui.button("Connect Spotify device").clicked() {
+                outcome.action = Some(RowAction::Open);
+                ui.close_menu();
+            }
+        } else {
+            if ui.button(format!("Play {noun}")).clicked() {
+                outcome.action = Some(RowAction::Play);
+                ui.close_menu();
+            }
+            if ui.button(format!("Play {noun} next")).clicked() {
+                outcome.action = Some(RowAction::PlayNext);
+                ui.close_menu();
+            }
+            if ui.button(format!("Add {noun} to queue")).clicked() {
+                outcome.action = Some(RowAction::Queue);
+                ui.close_menu();
+            }
+            if ui.button(format!("Open {noun}")).clicked() {
+                outcome.action = Some(RowAction::Open);
+                ui.close_menu();
+            }
+            ui.menu_button(format!("Add {noun} to playlist"), |ui| {
+                if playlists.is_empty() {
+                    ui.label(RichText::new("No local playlists yet").color(p.muted));
+                }
+                for playlist in &playlists {
+                    if ui.button(&playlist.name).clicked() {
+                        outcome.action =
+                            Some(RowAction::AddToPlaylist(playlist.id, playlist.name.clone()));
+                        ui.close_menu();
+                    }
+                }
+                ui.separator();
+                if ui.button("New playlist…").clicked() {
+                    outcome.action = Some(RowAction::NewPlaylist);
+                    ui.close_menu();
+                }
+            });
         }
-        if ui.button("Track details").clicked() {
+        if ui.button("Details").clicked() {
             outcome.action = Some(RowAction::Info);
             ui.close_menu();
         }
     });
     if response.double_clicked() {
-        outcome.action = Some(RowAction::Play);
+        outcome.action = Some(if playable {
+            RowAction::Play
+        } else {
+            RowAction::Open
+        });
     }
     outcome
 }
@@ -536,8 +597,12 @@ impl NiruampApp {
             RowAction::Play => {
                 if queue {
                     self.play_queue_index(index);
-                } else if !tracks.is_empty() {
-                    self.play_group(tracks, index);
+                } else if let Some(t) = &track {
+                    if t.is_track() {
+                        self.play_group(tracks, index);
+                    } else {
+                        self.expand_container(t, ExpandAction::Play);
+                    }
                 }
             }
             RowAction::PlayNext => {
@@ -560,10 +625,21 @@ impl NiruampApp {
                     self.add_to_playlist(&t, id, &name);
                 }
             }
+            RowAction::Open => {
+                if let Some(t) = &track {
+                    self.open_item(t);
+                }
+            }
             RowAction::NewPlaylist => {
-                self.modal = Some(crate::app::Modal::NewPlaylist {
-                    name: String::new(),
-                });
+                if let Some(t) = &track {
+                    if t.is_track() {
+                        self.open_new_playlist(Some(t.clone()));
+                    } else {
+                        self.expand_container(t, ExpandAction::NewPlaylist);
+                    }
+                } else {
+                    self.open_new_playlist(None);
+                }
             }
             RowAction::RemoveQueue => {
                 if queue {

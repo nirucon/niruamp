@@ -76,6 +76,10 @@ selection or steal text focus.
   No synthetic bars are generated.
 - Lists use `show_rows` virtualization in playlist, queue, browse and grouped
   search results.
+- Container rows (album, playlist, folder, programme) are resolved through
+  NPLAY's browse commands before Play/Queue/Playlist actions. The frontend never
+  sends a container as a track to the service; NPLAY also rejects such rows at
+  the playback/queue/playlist boundary.
 - Custom controls participate in egui's focus chain and draw a visible focus
   ring; Enter activates the focused control. Rows are selected with Up/Down and
   are deliberately not part of the tab chain.

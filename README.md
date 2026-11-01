@@ -20,8 +20,8 @@ standalone terminal player and continues to work without NIRUX or NIRUAMP.
 
 ## Status
 
-**0.3.0 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
-client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.1 or
+**0.3.1 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
+client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.2 or
 newer is required** and remains fully usable standalone.
 
 The repository includes the frontend, the NPLAY headless service changes and
@@ -46,6 +46,9 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
   provider albums/playlists/artists and Spotify devices.
 - Queue play/add/remove/drag-reorder/clear/save; local playlists; favorites;
   ratings; custom radio setup; drag-and-drop local media and streams.
+- Album, playlist, folder and programme context actions resolve through NPLAY
+  into their playable tracks; containers are never queued or played as fake
+  tracks. Play/Queue All only operate on playable rows.
 - Artwork from NPLAY's existing cache, decoded off the UI thread, bounded cache.
 - NIRUX appearance integration (all builtin themes, sparse custom themes and
   sparse `appearance.toml`) with live reload and a standalone classic fallback.
@@ -58,8 +61,8 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 ## Requirements
 
 - Linux with X11 or XWayland. The UI uses `eframe`/`egui` with the Glow renderer.
-  Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0; 0.2.0 requires NPLAY 1.7.1.
-- **NPLAY 1.7.1+** with its normal runtime prerequisites (`mpv`, Python 3).
+  Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0; current releases require NPLAY 1.7.2.
+- **NPLAY 1.7.2+** with its normal runtime prerequisites (`mpv`, Python 3).
 - Rust 1.75+ to build.
 - Optional: `cava` (visualization), `yt-dlp` (YouTube), `librespot` (Spotify
   local playback), Navidrome credentials, Spotify Premium for Connect playback.
@@ -88,7 +91,7 @@ The prebuilt archive is built in Debian 12 for x86_64 and needs
 `libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
 
 ```sh
-tar -xzf niruamp-0.3.0-x86_64-linux-gnu.tar.gz
+tar -xzf niruamp-0.3.1-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 

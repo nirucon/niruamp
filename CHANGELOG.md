@@ -1,3 +1,20 @@
+# NIRUAMP 0.3.1
+
+- Fix album/playlist/folder/programme context actions: Play, Play next,
+  Add to queue, Add to playlist and New playlist now resolve the container into
+  its tracks through NPLAY before acting. Playing an album plays its tracks
+  instead of opening a pseudo row.
+- Add explicit Open album/playlist/folder/programme and Open artist/Connect
+  Spotify device actions; hide unsupported Favorite actions on containers.
+- Play/Queue All only operate on playable tracks, and the buttons are hidden
+  when a list contains no tracks (for example an album list).
+- Frontend filters container rows from playback context and bulk queueing;
+  NPLAY 1.7.2 rejects containers at the service boundary and adds
+  `playlists.add_many`.
+- Legacy container rows in the persisted queue/context, local playlists and
+  favorites are cleaned at service startup.
+- Requires NPLAY 1.7.2 or newer.
+
 # NIRUAMP 0.3.0
 
 - NIRUX-theme-aware tray icon: the framed play mark follows the active theme's

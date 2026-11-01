@@ -23,7 +23,7 @@ done
 printf "%sNIRUAMP%s%s\n" "$B" "$N" " — Rust graphical frontend for NPLAY"
 command -v nplay >/dev/null || {
   printf "%sERROR%s NPLAY is required and was not found in PATH.\n" "$R" "$N"
-  printf "Install NPLAY 1.7.1 or newer: https://github.com/nirucon/nplay\n"
+  printf "Install NPLAY 1.7.2 or newer: https://github.com/nirucon/nplay\n"
   printf "For a development checkout, set NPLAY_DEV_PATH when running niruamp.\n"
   [ "${NIRUAMP_SKIP_NPLAY_CHECK:-0}" = "1" ] || exit 1
 }
@@ -32,12 +32,12 @@ if command -v nplay >/dev/null; then
   if [ -n "$VERSION_NPLAY" ] && ! python3 - "$VERSION_NPLAY" <<'PY'
 import sys
 v=sys.argv[1].split('.')
-try: ok=(int(v[0]),int(v[1]),int(v[2] if len(v)>2 else 0)) >= (1,7,1)
+try: ok=(int(v[0]),int(v[1]),int(v[2] if len(v)>2 else 0)) >= (1,7,2)
 except Exception: ok=False
 sys.exit(0 if ok else 1)
 PY
   then
-    printf "%sERROR%s NPLAY %s is too old; 1.7.1 or newer is required.\n" "$R" "$N" "$VERSION_NPLAY"
+    printf "%sERROR%s NPLAY %s is too old; 1.7.2 or newer is required.\n" "$R" "$N" "$VERSION_NPLAY"
     printf "Upgrade NPLAY, then run this installer again.\n"
     [ "${NIRUAMP_SKIP_NPLAY_CHECK:-0}" = "1" ] || exit 1
   fi

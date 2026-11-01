@@ -1,8 +1,8 @@
 # NPLAY local control protocol (version 1)
 
 > Canonical backend document: `nplay/docs/PROTOCOL.md`. This copy travels with
-> NIRUAMP so the frontend contract is self-contained. NIRUAMP 0.2.0 requires
-> NPLAY **1.7.1** and protocol **1**.
+> NIRUAMP. NIRUAMP 0.3.1 requires NPLAY **1.7.2** and protocol **1**. Container
+> rows must be expanded through `browse` before playback/queue/playlist actions.
 
 NPLAY 1.7.0 adds a headless control service for graphical clients such as
 NIRUAMP. The terminal player is unchanged and does not require the service, a
@@ -132,7 +132,7 @@ service.
 | `playback.shuffle` | optional `mode`: `off|shuffle|smart` | |
 | `playback.play_external` | `path` or `url`, optional `title`, `queue`, `next` | Dropped local files and http(s) streams; `queue:true` registers and appends without starting playback |
 | `queue.list` | `{}` | |
-| `queue.add` | `track`, optional `next` | |
+| `queue.add` | `track`, optional `next` | Container rows are rejected |
 | `queue.add_many` | `tracks`, optional `next` | Max 1000 |
 | `queue.play` / `queue.remove` / `queue.move` | `index`, optional `delta` | |
 | `queue.reorder` | `from`, `to` | Move one queue item to an absolute index |
@@ -143,7 +143,8 @@ service.
 | `playlists.list` | `{}` | |
 | `playlists.tracks` | `id` | |
 | `playlists.create` / `rename` / `delete` | `name` / `id` | |
-| `playlists.add` | `id`, `track` | |
+| `playlists.add` | `id`, `track` | Container rows are rejected |
+| `playlists.add_many` | `id`, `tracks` | Bulk add up to 5000 playable tracks |
 | `playlists.remove` | `id`, `index` | |
 | `playlists.move` | `id`, `index`, `delta` | |
 | `favorites.list` / `favorites.toggle` | `{}` / `track` | |
@@ -221,5 +222,5 @@ requests, `-32010` incompatible protocol. Error `data` may include a bounded
 ## Minimum versions
 
 - Protocol version: `1`
-- NPLAY minimum: `1.7.1`
-- NIRUAMP minimum: `0.2.0`
+- NPLAY minimum: `1.7.2`
+- NIRUAMP minimum: `0.3.1`

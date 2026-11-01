@@ -242,30 +242,27 @@ impl NiruampApp {
                 FontId::proportional(s(9.0)),
                 p.muted,
             );
-            let actions_w = s(104.0);
-            let mut ax = header.right() - s(50.0);
-            if mini_action(
-                ui,
-                Rect::from_center_size(pos2(ax, header.center().y), vec2(s(46.0), s(16.0))),
-                "PLAY ALL",
-                &p,
-            ) {
-                let items = self.browser.items.clone();
-                if !items.is_empty() {
-                    self.play_group(&items, 0);
+            let playable = crate::app::playable_items(&self.browser.items);
+            if !playable.is_empty() {
+                let mut ax = header.right() - s(50.0);
+                if mini_action(
+                    ui,
+                    Rect::from_center_size(pos2(ax, header.center().y), vec2(s(46.0), s(16.0))),
+                    "PLAY ALL",
+                    &p,
+                ) {
+                    self.play_group(&playable, 0);
+                }
+                ax -= s(52.0);
+                if mini_action(
+                    ui,
+                    Rect::from_center_size(pos2(ax, header.center().y), vec2(s(46.0), s(16.0))),
+                    "QUEUE ALL",
+                    &p,
+                ) {
+                    self.queue_add_many(&playable, false);
                 }
             }
-            ax -= s(52.0);
-            if mini_action(
-                ui,
-                Rect::from_center_size(pos2(ax, header.center().y), vec2(s(46.0), s(16.0))),
-                "QUEUE ALL",
-                &p,
-            ) {
-                let items = self.browser.items.clone();
-                self.queue_add_many(&items, false);
-            }
-            let _ = actions_w;
             ui.add_space(header_h + s(2.0));
         }
         let row_h = s(22.0);
@@ -324,7 +321,8 @@ impl NiruampApp {
                                     FontId::proportional(s(9.0)),
                                     p.muted,
                                 );
-                                if !group.items.is_empty() {
+                                let playable = crate::app::playable_items(&group.items);
+                                if !playable.is_empty() {
                                     let mut ax = header.right() - s(50.0);
                                     if mini_action(
                                         ui,
@@ -335,7 +333,7 @@ impl NiruampApp {
                                         "PLAY ALL",
                                         &p,
                                     ) {
-                                        self.play_group(&group.items, 0);
+                                        self.play_group(&playable, 0);
                                     }
                                     ax -= s(52.0);
                                     if mini_action(
@@ -347,7 +345,7 @@ impl NiruampApp {
                                         "QUEUE ALL",
                                         &p,
                                     ) {
-                                        self.queue_add_many(&group.items, false);
+                                        self.queue_add_many(&playable, false);
                                     }
                                 }
                             }
