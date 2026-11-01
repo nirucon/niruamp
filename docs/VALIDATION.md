@@ -1,7 +1,7 @@
 # NIRUAMP validation report
 
 Date: 2026-10-31
-Frontend: NIRUAMP 0.3.0 (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
+Frontend: NIRUAMP 0.3.0, commit `6f7ae77`, tag `v0.3.0` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
 Backend: NPLAY 1.7.1, control protocol 1
 Target: NIRUX / X11 and non-NIRUX Linux desktops
 
@@ -19,7 +19,7 @@ Target: NIRUX / X11 and non-NIRUX Linux desktops
 | Rust | rustc/cargo 1.99.1 |
 | Python | 3.12.3 |
 | NPLAY revision | `b834fe3` (release: NPLAY 1.7.1 queue reorder) |
-| Release asset | `niruamp-0.2.0-x86_64-linux-gnu.tar.gz`, SHA-256 `f79d278f882f25748fdd33975366cb8bc363bab29e8d94af811a30e836ea50be` (Debian 12 build) |
+| Release asset | `niruamp-0.3.0-x86_64-linux-gnu.tar.gz`, SHA-256 `026caa32040a441fa165556f0f65ec9dcecceb3e1d18dc6f2c337a151d7b0ee8` (Debian 12 build) |
 | Live target | `niruxwork`, Debian 13.7 (trixie), kernel 7.2.11+deb13-amd64, AMD Ryzen AI 9 HX PRO 375, 24 logical CPUs, 62 GiB RAM, Radeon 880M/890M, X11/NIRUX |
 
 The owner supplied a Tailscale/SSH target (`niruxwork`) late in the pass. Live
@@ -130,8 +130,17 @@ CPU (of 24), not the much higher software-GL/Xvfb figure.
   capture/DSP, break the NPLAY boundary, and would not remove the dominant cost
   (full-window redraw). The existing CAVA path remains.
 - `cargo fmt`, clippy and 18 Rust tests pass; NPLAY remains 1.7.1.
-- Live tray-colour and startup-sound verification on niruxwork is performed after
-  installing this build.
+- Live on niruxwork after installing 0.3.0: `pw-play --media-role=Notification
+  --volume=0.65 ~/.cache/niruamp/startup.ogg` ran at launch and the 76,511-byte
+  embedded asset was materialised with mode 0600. It did not alter NPLAY's
+  current/paused media state.
+- Live tray colour on niruxwork: the framed play icon in NIRUBAR changed from the
+  previous fixed amber/green design to the forest-vigil palette (dark tile with a
+  light green play mark), and the titlebar logo showed only the play triangle in
+  its frame. The tray item still registered and the menu/restore behaviour from
+  0.2.0 remained.
+- The 0.3.0 desktop/app screenshots were inspected but are not committed because
+  they contain the owner's personal library, session and terminal content.
 
 ## Functional evidence
 
@@ -253,6 +262,8 @@ Interpretation:
       virtualization, artwork downscaling and tray hide/restore were verified
       locally and the real NIRUBAR tray icon, restore click and menu were verified
       on niruxwork with NIRUAMP 0.2.0.
+- [x] 0.3.0 theme-driven tray icon and startup sound were live-verified on
+      niruxwork; startup sound is embedded, optional and outside NPLAY state.
 - [x] Resource measurements for idle, paused, playing, visualization harness and
       a 2,006-track library; minimized/obscured and real-CAVA/hardware-GPU
       measurements remain unverified.
