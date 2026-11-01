@@ -20,7 +20,7 @@ standalone terminal player and continues to work without NIRUX or NIRUAMP.
 
 ## Status
 
-**0.3.2 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
+**0.3.3 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
 client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.3 or
 newer is required** and remains fully usable standalone.
 
