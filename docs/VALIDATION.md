@@ -101,9 +101,19 @@ CPU (of 24), not the much higher software-GL/Xvfb figure.
 - Artwork test decodes a 1024×768 PNG to a 256×192 texture; the texture cache is
   capped at 8.
 - Browser/search lists now use `show_rows` virtualization.
-- 0.2.0 was not measured on the 24-core Ryzen host because it was powered off
-  after the 0.1.0 validation. The 30 Hz visualization may cost more than the
-  0.1.0 10 Hz measurement below; that remains to be measured on real hardware.
+- The prebuilt 0.2.0 binary was installed on niruxwork with NPLAY 1.7.1 and
+  started in the real NIRUX/X11 session. The SNI item registered with NIRUBAR's
+  StatusNotifierWatcher, the original icon was visible in the bar, left-click
+  restored a minimized window, and the right-click menu showed Show NIRUAMP,
+  Pause, Next track, Previous track and Quit NIRUAMP. NPLAY was really playing
+  a Navidrome track through mpv with cava running. A desktop screenshot was
+  inspected but is not committed because it contains the owner's personal
+  session, credentials in a terminal and library metadata.
+- Real-hardware 0.2.0 measurement while playing with real CAVA and the tray
+  active: frontend **8.491%** of one logical CPU / **188.2 MiB** RSS, backend
+  **2.397% / 49.1 MiB**, mpv **2.764% / 108.2 MiB**, cava **1.698% / 15.8 MiB**.
+  The higher frontend/backend cost than 0.1.0 is the requested 30 Hz CAVA polling
+  and is still well below one of the 24 logical CPUs.
 
 ## Functional evidence
 
@@ -159,6 +169,7 @@ was not measurable on this host.
 | Playing (fake mpv, CAVA off) | 45 s | 2.821% | 118.8 MiB | 0.044% / 35.3 MiB | fake mpv 0.022% / 12.5 MiB | 2.887% |
 | Playing + visualization harness | 20 s | 30.079% | 119.2 MiB | 0.250% / 35.7 MiB | fake mpv 0% / 12.5 MiB; fake cava 0.150% / 10.8 MiB | 30.479% |
 | Large library: 2,006 indexed tracks, 1,000 rows loaded | 30 s | 0.033% | 135.5 MiB | 0.033% / 34.3 MiB | — | 0.066% |
+| **0.2.0** real playback + real CAVA + tray (niruxwork, 24 logical CPUs) | 30 s | **8.491%** | **188.2 MiB** | 2.397% / 49.1 MiB | mpv 2.764% / 108.2 MiB; cava 1.698% / 15.8 MiB | 15.350% |
 
 Interpretation:
 
@@ -178,9 +189,11 @@ Interpretation:
   frontend + backend + helpers under software rendering. The observed maximum
   was 178.2 MiB (playing + visualization harness). A universal memory limit is
   not claimed for arbitrary libraries/themes/monitors.
-- Minimized/obscured and mixed-DPI multi-monitor measurements were not possible
-  without a real WM/desktop; code checks minimized/hidden state before polling
-  visualization but this was not measured.
+- Minimized/obscured and mixed-DPI multi-monitor measurements were not measured;
+  the tray-hidden path suspends visualization and CAVA delivery, and
+  hide/restore was verified live.
+- 0.2.0 CPU/RSS above was measured on niruxwork while genuinely playing with
+  real CAVA and the tray active.
 
 ## Sources coverage
 
@@ -219,8 +232,9 @@ Interpretation:
 - [x] Layout checks at 800×600, 1366×768, 1920×1080 and 1.5× scaling; HiDPI
       mixed-monitor testing remains unverified.
 - [x] Keyboard focus/Tab+Enter, queue drag reorder, resize grip, browser
-      virtualization, artwork downscaling and tray hide/restore verified in the
-      0.2.0 local pass. Real NIRUBAR tray rendering remains for the owner's desktop.
+      virtualization, artwork downscaling and tray hide/restore were verified
+      locally and the real NIRUBAR tray icon, restore click and menu were verified
+      on niruxwork with NIRUAMP 0.2.0.
 - [x] Resource measurements for idle, paused, playing, visualization harness and
       a 2,006-track library; minimized/obscured and real-CAVA/hardware-GPU
       measurements remain unverified.
