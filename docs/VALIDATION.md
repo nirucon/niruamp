@@ -1,8 +1,8 @@
 # NIRUAMP validation report
 
 Date: 2026-10-31
-Frontend: NIRUAMP 0.3.1, commit `3ccb9db`, tag `v0.3.1` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
-Backend: NPLAY 1.7.2, control protocol 1
+Frontend: NIRUAMP 0.3.2, commit `e1e9bc2`, tag `v0.3.2` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
+Backend: NPLAY 1.7.3, control protocol 1
 Target: NIRUX / X11 and non-NIRUX Linux desktops
 
 ## Test machine
@@ -18,8 +18,8 @@ Target: NIRUX / X11 and non-NIRUX Linux desktops
 | Renderer | Glow over software GL (llvmpipe); no hardware GLX session was available |
 | Rust | rustc/cargo 1.99.1 |
 | Python | 3.12.3 |
-| NPLAY revision | `c1d2307` (release: NPLAY 1.7.2 container safety and bulk playlists) |
-| Release asset | `niruamp-0.3.1-x86_64-linux-gnu.tar.gz`, SHA-256 `08d5f9c66efaed60ab4caffb155f8213ef33cef41a1c0afe541601eaf4b514de` (Debian 12 build) |
+| NPLAY revision | `2cfaa4c` (release: NPLAY 1.7.3 CAVA recovery) |
+| Release asset | `niruamp-0.3.2-x86_64-linux-gnu.tar.gz`, SHA-256 `ba7d5163f0cc1d5d485d12257947a0170aa476a394f5e68928015e5ce1bc97d1` (Debian 12 build) |
 | Live target | `niruxwork`, Debian 13.7 (trixie), kernel 7.2.11+deb13-amd64, AMD Ryzen AI 9 HX PRO 375, 24 logical CPUs, 62 GiB RAM, Radeon 880M/890M, X11/NIRUX |
 
 The owner supplied a Tailscale/SSH target (`niruxwork`) late in the pass. Live
@@ -162,6 +162,22 @@ CPU (of 24), not the much higher software-GL/Xvfb figure.
 - Automated service test covers local album discovery, container rejection,
   normal track playback references and bulk playlist insertion.
 - NIRUX 0.12.158 pins NPLAY 1.7.2 and NIRUAMP 0.3.1 as the current music extras.
+
+## 0.3.2 CAVA recovery validation
+
+- Reproduced the report on niruxwork: after a service restart the frontend showed
+  `VISUALIZER UNAVAILABLE`. CAVA was not running, but the old service returned
+  `visualization.start: available=true` and then data/process failures left the
+  frontend permanently disabled.
+- NPLAY 1.7.3 now verifies that CAVA actually started, reports a structured error
+  otherwise, detects CAVA exit, and restarts it on the next visualization frame.
+- NIRUAMP 0.3.2 retries failed visualization after 4 seconds, on track change,
+  after reconnect and when re-enabled, instead of remaining stuck.
+- Live on niruxwork: killed the running `cava` process; the backend started a new
+  `cava` process on the next frame and returned non-zero bars. The GUI continued
+  playing with the visualizer visible, and the screenshot showed bars rather than
+  the unavailable message.
+- Full niruxwork versions after the update: NIRUAMP 0.3.2 / NPLAY 1.7.3.
 
 ## Functional evidence
 
