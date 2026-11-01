@@ -1,8 +1,8 @@
 # NIRUAMP validation report
 
 Date: 2026-10-31
-Frontend: NIRUAMP 0.3.0, commit `6f7ae77`, tag `v0.3.0` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
-Backend: NPLAY 1.7.1, control protocol 1
+Frontend: NIRUAMP 0.3.1, commit `3ccb9db`, tag `v0.3.1` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
+Backend: NPLAY 1.7.2, control protocol 1
 Target: NIRUX / X11 and non-NIRUX Linux desktops
 
 ## Test machine
@@ -18,8 +18,8 @@ Target: NIRUX / X11 and non-NIRUX Linux desktops
 | Renderer | Glow over software GL (llvmpipe); no hardware GLX session was available |
 | Rust | rustc/cargo 1.99.1 |
 | Python | 3.12.3 |
-| NPLAY revision | `b834fe3` (release: NPLAY 1.7.1 queue reorder) |
-| Release asset | `niruamp-0.3.0-x86_64-linux-gnu.tar.gz`, SHA-256 `026caa32040a441fa165556f0f65ec9dcecceb3e1d18dc6f2c337a151d7b0ee8` (Debian 12 build) |
+| NPLAY revision | `c1d2307` (release: NPLAY 1.7.2 container safety and bulk playlists) |
+| Release asset | `niruamp-0.3.1-x86_64-linux-gnu.tar.gz`, SHA-256 `08d5f9c66efaed60ab4caffb155f8213ef33cef41a1c0afe541601eaf4b514de` (Debian 12 build) |
 | Live target | `niruxwork`, Debian 13.7 (trixie), kernel 7.2.11+deb13-amd64, AMD Ryzen AI 9 HX PRO 375, 24 logical CPUs, 62 GiB RAM, Radeon 880M/890M, X11/NIRUX |
 
 The owner supplied a Tailscale/SSH target (`niruxwork`) late in the pass. Live
@@ -35,7 +35,7 @@ results were fabricated; Spotify/YouTube accounts remained unavailable.
 | Rust clippy (`cargo clippy --all-targets -- -D warnings`) | pass |
 | Rust unit tests (`cargo test`) | **18 passed** |
 | Rust release build (`cargo build --release --locked`) | pass |
-| NPLAY full Python suite (`python3 -m unittest discover -s tests`) | **81 passed** (68 pre-existing + 13 service) |
+| NPLAY full Python suite (`python3 -m unittest discover -s tests`) | **82 passed** (68 pre-existing + 14 service) |
 | NPLAY service tests | handshake, events, playlists, queue, bulk queue, external queueing, artwork redaction, malformed/oversized frames, permissions, second service, graceful shutdown, idle exit, local playback via real `Player` boundary with mpv IPC harness |
 | Install/uninstall | release binary, desktop entry, SVG icon installed; `--version` works; uninstall preserves preferences and NPLAY data |
 | Second GUI launch | exits 0; first window remains and is activated; no second backend/player |
@@ -141,6 +141,27 @@ CPU (of 24), not the much higher software-GL/Xvfb figure.
   0.2.0 remained.
 - The 0.3.0 desktop/app screenshots were inspected but are not committed because
   they contain the owner's personal library, session and terminal content.
+
+## 0.3.1 container-action validation
+
+- Reproduced the reported bug against the previous build: container rows
+  (album/playlist/folder/programme) were sent directly to `queue.add` and shown
+  as pseudo tracks, and Play merely navigated.
+- With 0.3.1, right-click → **Add album to queue** on a local album added the
+  album's **6 real tracks** and no album row. Right-click → **Play album** set a
+  6-track playback context and played the first track.
+- Right-click → **Add album to playlist → New playlist…** created a playlist with
+  all 6 tracks, confirming expansion before `playlists.add_many`.
+- Play All / Queue All are hidden on the Local Albums list because it contains no
+  playable track rows; they remain on track lists.
+- Container actions are labelled explicitly (Play album, Open album, Open artist,
+  Connect Spotify device, etc.); Favorite is only offered for tracks.
+- NPLAY 1.7.2 rejects container rows at playback/queue/playlist/favorite
+  boundaries, adds `playlists.add_many`, and cleans legacy non-playable queue,
+  context, playlist and favorite rows at service startup.
+- Automated service test covers local album discovery, container rejection,
+  normal track playback references and bulk playlist insertion.
+- NIRUX 0.12.158 pins NPLAY 1.7.2 and NIRUAMP 0.3.1 as the current music extras.
 
 ## Functional evidence
 
