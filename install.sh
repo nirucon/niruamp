@@ -56,7 +56,7 @@ cargo_version_ok() {
   python3 - "$(cargo --version 2>/dev/null | awk '{print $2}')" <<'PY'
 import sys
 v=sys.argv[1].split('.')
-try: ok=(int(v[0]),int(v[1])) >= (1,75)
+try: ok=(int(v[0]),int(v[1])) >= (1,85)
 except Exception: ok=False
 sys.exit(0 if ok else 1)
 PY
@@ -101,7 +101,7 @@ download_prebuilt() {
 build_from_source() {
   if ! cargo_version_ok; then
     printf "%sERROR%s No prebuilt binary is available for this architecture/glibc,\n" "$R" "$N"
-    printf "and cargo 1.75+ is required to build from source.\n"
+    printf "and cargo 1.85+ is required to build from source.\n"
     printf "Install Rust: https://rustup.rs\n"
     exit 1
   fi

@@ -66,7 +66,7 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 - Linux with X11 or XWayland. The UI uses `eframe`/`egui` with the Glow renderer.
   Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0; current releases require NPLAY 1.7.2.
 - **NPLAY 1.7.3+** with its normal runtime prerequisites (`mpv`, Python 3).
-- Rust 1.75+ to build.
+- Rust 1.85+ to build (the declared `rust-version`; Debian 13 ships 1.85).
 - Optional: `cava` (visualization), `yt-dlp` (YouTube), `librespot` (Spotify
   local playback), Navidrome credentials, Spotify Premium for Connect playback.
 
