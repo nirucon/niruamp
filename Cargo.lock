@@ -1722,9 +1722,11 @@ dependencies = [
  "egui",
  "image",
  "ksni",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "toml",
+ "x11rb",
 ]
 
 [[package]]

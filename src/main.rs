@@ -16,6 +16,7 @@ mod sound;
 mod theme;
 mod tray;
 mod views;
+mod visibility;
 
 use crate::app::NiruampApp;
 use crate::config::{Preferences, WindowState};

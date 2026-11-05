@@ -271,6 +271,10 @@ pub struct NiruampApp {
     pub(crate) hidden_to_tray: bool,
     pub(crate) startup_sound_done: bool,
     pub(crate) immersive: bool,
+    /// X11 map/obscured/hidden state of our window (None until the first
+    /// frame, or without X11).
+    pub(crate) visibility: Option<crate::visibility::Visibility>,
+    pub(crate) visibility_probed: bool,
 }
 
 impl NiruampApp {
@@ -393,6 +397,8 @@ impl NiruampApp {
             hidden_to_tray: false,
             startup_sound_done: false,
             immersive: false,
+            visibility: None,
+            visibility_probed: false,
         };
         if let Some(b) = &app.backend {
             let c = ctx.clone();
@@ -1116,7 +1122,8 @@ impl NiruampApp {
             && visible
             && matches!(self.playback.status.as_str(), "playing" | "paused")
             && !self.hidden_to_tray
-            && !ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+            && !ctx.input(|i| i.viewport().minimized.unwrap_or(false))
+            && self.window_visible();
         self.vis.active = should;
         if !should {
             self.vis.retry_at = None;
@@ -1157,6 +1164,26 @@ impl NiruampApp {
         if !self.capabilities.visualization {
             self.vis.started = false;
         }
+    }
+
+    /// False when the window manager unmapped the window (another
+    /// workspace), marked it hidden, or it is fully covered.
+    pub(crate) fn window_visible(&self) -> bool {
+        self.visibility.as_ref().is_none_or(|v| v.visible())
+    }
+
+    fn probe_visibility(&mut self, ctx: &Context, frame: &eframe::Frame) {
+        if self.visibility_probed {
+            return;
+        }
+        self.visibility_probed = true;
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let window = match frame.window_handle().map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::Xlib(h)) => h.window as u32,
+            Ok(RawWindowHandle::Xcb(h)) => h.window.get(),
+            _ => return,
+        };
+        self.visibility = crate::visibility::Visibility::spawn(window, ctx.clone());
     }
 
     /// Spectrum frame interval: the poll period and the easing step.
@@ -2598,7 +2625,7 @@ impl NiruampApp {
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         crate::schedule::FrameInputs {
             now: Instant::now(),
-            hidden: self.hidden_to_tray || minimized,
+            hidden: self.hidden_to_tray || minimized || !self.window_visible(),
             playing: self.playback.status == "playing",
             position: self.position_now(),
             loading: self.playback.status == "loading",
@@ -2653,7 +2680,8 @@ impl NiruampApp {
 }
 
 impl eframe::App for NiruampApp {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        self.probe_visibility(ctx, frame);
         if self.debug_fps {
             self.fps_frames += 1;
             if self.fps_start.elapsed() >= Duration::from_secs(5) {
