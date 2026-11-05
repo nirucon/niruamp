@@ -9,6 +9,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread;
@@ -62,6 +63,8 @@ impl BackendHandle {
     pub fn shutdown(self, keep_playing: bool) {
         if self.owned && !keep_playing {
             let _ = self.client.send("service.shutdown", serde_json::json!({}));
+            // One-shot at exit, not a watch loop: give the writer thread a
+            // moment to deliver the request before the process ends.
             thread::sleep(Duration::from_millis(250));
         }
     }
@@ -169,6 +172,10 @@ fn spawn_backend(prefs: &Preferences, socket: &Path) -> Result<BackendHandle, De
         log_tail: log_tail(&log_path),
     })?;
 
+    // Bounded startup wait (at most 12 s, only when NIRUAMP itself launches
+    // NPLAY): the child's exit status and the socket appearing are checked
+    // every 100 ms. It ends as soon as the service answers; nothing keeps
+    // polling afterwards.
     let deadline = Instant::now() + Duration::from_secs(12);
     while Instant::now() < deadline {
         if let Some(status) = child.try_wait().ok().flatten() {
@@ -277,6 +284,8 @@ pub fn ensure_backend(
 pub struct InstanceGuard {
     path: PathBuf,
     listener: Option<UnixListener>,
+    /// Set on drop; the listener thread exits on the next accept.
+    stop: Arc<AtomicBool>,
 }
 
 pub enum InstanceKind {
@@ -318,6 +327,7 @@ impl InstanceGuard {
                 Ok(InstanceKind::Primary(Self {
                     path,
                     listener: Some(listener),
+                    stop: Arc::new(AtomicBool::new(false)),
                 }))
             }
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
@@ -331,35 +341,28 @@ impl InstanceGuard {
                 Ok(InstanceKind::Primary(Self {
                     path,
                     listener: Some(listener),
+                    stop: Arc::new(AtomicBool::new(false)),
                 }))
             }
             Err(e) => Err(e),
         }
     }
 
+    /// Accept activation requests from later launches. The accept blocks:
+    /// the thread sleeps in the kernel until a client connects, and drop
+    /// unblocks it by connecting once with the stop flag set.
     pub fn start_listener(&mut self, tx: Sender<()>, ctx: egui::Context) {
         let Some(listener) = self.listener.take() else {
             return;
         };
-        listener.set_nonblocking(true).ok();
+        let stop = self.stop.clone();
         thread::Builder::new()
             .name("niruamp-instance".into())
-            .spawn(move || loop {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        let mut reader = BufReader::new(stream);
-                        let mut line = String::new();
-                        let _ = reader.read_line(&mut line);
-                        if line.trim() == "activate" {
-                            let _ = tx.send(());
-                            ctx.request_repaint();
-                        }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(120));
-                    }
-                    Err(_) => return,
-                }
+            .spawn(move || {
+                serve_instance(listener, &stop, || {
+                    let _ = tx.send(());
+                    ctx.request_repaint();
+                })
             })
             .ok();
     }
@@ -371,7 +374,31 @@ impl InstanceGuard {
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if self.listener.is_none() {
+            // Wake the blocking accept so the thread sees the stop flag.
+            let _ = UnixStream::connect(&self.path);
+        }
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn serve_instance(listener: UnixListener, stop: &AtomicBool, mut activate: impl FnMut()) {
+    for stream in listener.incoming() {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(stream) = stream else {
+            continue;
+        };
+        // A client that connects but never writes must not wedge the listener.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        if line.trim() == "activate" {
+            activate();
+        }
     }
 }
 
@@ -380,4 +407,47 @@ pub fn spawn_backend_for_tests(_prefs: &Preferences) {}
 #[allow(dead_code)]
 pub fn wake_arc(ctx: egui::Context) -> Arc<dyn Fn() + Send + Sync> {
     Arc::new(move || ctx.request_repaint())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn instance_listener_blocks_and_stops_on_drop() {
+        let dir = std::env::temp_dir().join(format!("niruamp-inst-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("instance.sock");
+        let _ = fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        let mut guard = InstanceGuard {
+            path: path.clone(),
+            listener: Some(listener),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        let (tx, rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let listener = guard.listener.take().unwrap();
+        let stop = guard.stop.clone();
+        let handle = thread::spawn(move || {
+            serve_instance(listener, &stop, || tx.send(()).unwrap());
+            done_tx.send(()).unwrap();
+        });
+        UnixStream::connect(&path)
+            .unwrap()
+            .write_all(b"activate\n")
+            .unwrap();
+        rx.recv_timeout(Duration::from_secs(3)).expect("activation");
+        // A silent client does not count as an activation.
+        drop(UnixStream::connect(&path).unwrap());
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        drop(guard);
+        done_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("listener thread exits on drop");
+        handle.join().unwrap();
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
