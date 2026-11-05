@@ -2,7 +2,7 @@
 name = "niruamp"
 version = "0.3.3"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 description = "A Winamp-inspired Rust frontend for NPLAY on the NIRUX desktop"
 license = "MIT"
 repository = "https://github.com/nirucon/niruamp"
