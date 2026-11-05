@@ -67,7 +67,60 @@ pub enum Incoming {
         method: String,
         params: Value,
     },
+    /// A pushed visualization frame (protocol 1.1 `visualization.subscribe`):
+    /// one 0–255 value per bar. Not a JSON-RPC message.
+    Vis(Vec<u8>),
     Disconnected(String),
+}
+
+/// Classify one line from NPLAY. Visualization frames (`{"vis":…}`) are routed
+/// before JSON-RPC handling; anything unparseable is ignored.
+pub fn parse_line(text: &str) -> Option<Incoming> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let value: Value = serde_json::from_str(text).ok()?;
+    if let Some(vis) = value.get("vis") {
+        return decode_vis(vis, value.get("enc").and_then(Value::as_str)).map(Incoming::Vis);
+    }
+    if let Some(method) = value.get("method").and_then(Value::as_str) {
+        return Some(Incoming::Notification {
+            method: method.to_string(),
+            params: value.get("params").cloned().unwrap_or(Value::Null),
+        });
+    }
+    let id = value.get("id").and_then(Value::as_u64)?;
+    let result = if let Some(err) = value.get("error") {
+        Err(
+            serde_json::from_value::<RpcError>(err.clone()).unwrap_or_else(|_| RpcError {
+                code: -1,
+                message: "backend returned an invalid error".into(),
+                data: Value::Null,
+            }),
+        )
+    } else {
+        Ok(value.get("result").cloned().unwrap_or(Value::Null))
+    };
+    Some(Incoming::Response { id, result })
+}
+
+fn decode_vis(vis: &Value, enc: Option<&str>) -> Option<Vec<u8>> {
+    const MAX_BARS: usize = 256;
+    match vis {
+        Value::String(text) if enc == Some("b64") || enc.is_none() => {
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(text.as_bytes())
+                .ok()?;
+            (bytes.len() <= MAX_BARS).then_some(bytes)
+        }
+        Value::Array(items) if items.len() <= MAX_BARS => items
+            .iter()
+            .map(|v| v.as_u64().map(|n| n.min(255) as u8))
+            .collect(),
+        _ => None,
+    }
 }
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -78,6 +131,11 @@ pub struct Client {
     next_id: AtomicU64,
     path: PathBuf,
     wake: Arc<Mutex<Option<Wake>>>,
+    /// Set by the reader when it has woken the UI; cleared by the UI before it
+    /// drains. Any number of messages between two frames cost one wake.
+    wake_pending: Arc<AtomicBool>,
+    /// Id of the one outstanding quiet request (0 = none).
+    quiet_id: Arc<AtomicU64>,
     closed: Arc<AtomicBool>,
 }
 
@@ -167,14 +225,18 @@ impl Client {
         let (event_tx, rx) = mpsc::channel::<Incoming>();
         let wake: Arc<Mutex<Option<Wake>>> = Arc::new(Mutex::new(None));
         let closed = Arc::new(AtomicBool::new(false));
+        let wake_pending = Arc::new(AtomicBool::new(false));
+        let quiet_id = Arc::new(AtomicU64::new(0));
 
         {
             let event_tx = event_tx.clone();
             let closed = closed.clone();
             let wake = wake.clone();
+            let pending = wake_pending.clone();
+            let quiet = quiet_id.clone();
             thread::Builder::new()
                 .name("niruamp-rpc-read".into())
-                .spawn(move || read_loop(read_stream, event_tx, closed, wake))
+                .spawn(move || read_loop(read_stream, event_tx, closed, wake, pending, quiet))
                 .map_err(|e| ClientError::Io(e.to_string()))?;
         }
         {
@@ -193,6 +255,8 @@ impl Client {
                 next_id: AtomicU64::new(2),
                 path: path.to_path_buf(),
                 wake,
+                wake_pending,
+                quiet_id,
                 closed,
             },
             snapshot,
@@ -209,15 +273,34 @@ impl Client {
         }
     }
 
+    /// Called by the UI before it drains messages: the next message wakes it again.
+    pub fn rearm_wake(&self) {
+        self.wake_pending.store(false, Ordering::Release);
+    }
+
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
 
     pub fn send(&self, method: &str, params: Value) -> Result<u64, ClientError> {
+        self.send_with(method, params, false)
+    }
+
+    /// Send a request whose response must not wake the UI: the 1.0
+    /// `visualization.data` poll. The frame that sends the next poll picks
+    /// the answer up, so each poll period costs one frame instead of two.
+    pub fn send_quiet(&self, method: &str, params: Value) -> Result<u64, ClientError> {
+        self.send_with(method, params, true)
+    }
+
+    fn send_with(&self, method: &str, params: Value, quiet: bool) -> Result<u64, ClientError> {
         if self.is_closed() {
             return Err(ClientError::Io("backend connection is closed".into()));
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        if quiet {
+            self.quiet_id.store(id, Ordering::Release);
+        }
         let value = json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -256,11 +339,19 @@ fn wake_shared(wake: &Arc<Mutex<Option<Wake>>>) {
     }
 }
 
+fn wake_coalesced(wake: &Arc<Mutex<Option<Wake>>>, pending: &AtomicBool) {
+    if !pending.swap(true, Ordering::AcqRel) {
+        wake_shared(wake);
+    }
+}
+
 fn read_loop(
     stream: UnixStream,
     tx: Sender<Incoming>,
     closed: Arc<AtomicBool>,
     wake: Arc<Mutex<Option<Wake>>>,
+    pending: Arc<AtomicBool>,
+    quiet: Arc<AtomicU64>,
 ) {
     let mut reader = BufReader::new(stream);
     let mut buf = String::new();
@@ -284,39 +375,14 @@ fn read_loop(
                     wake_shared(&wake);
                     return;
                 }
-                let text = buf.trim();
-                if text.is_empty() {
-                    continue;
+                if let Some(msg) = parse_line(&buf) {
+                    let silent = matches!(&msg, Incoming::Response { id, .. }
+                        if *id == quiet.load(Ordering::Acquire));
+                    let _ = tx.send(msg);
+                    if !silent {
+                        wake_coalesced(&wake, &pending);
+                    }
                 }
-                let value: Value = match serde_json::from_str(text) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if let Some(method) = value.get("method").and_then(Value::as_str) {
-                    let _ = tx.send(Incoming::Notification {
-                        method: method.to_string(),
-                        params: value.get("params").cloned().unwrap_or(Value::Null),
-                    });
-                    wake_shared(&wake);
-                    continue;
-                }
-                let Some(id) = value.get("id").and_then(Value::as_u64) else {
-                    continue;
-                };
-                let result = if let Some(err) = value.get("error") {
-                    Err(
-                        serde_json::from_value::<RpcError>(err.clone()).unwrap_or_else(|_| {
-                            RpcError {
-                                code: -1,
-                                message: "backend returned an invalid error".into(),
-                                data: Value::Null,
-                            }
-                        }),
-                    )
-                } else {
-                    Ok(value.get("result").cloned().unwrap_or(Value::Null))
-                };
-                let _ = tx.send(Incoming::Response { id, result });
             }
             Err(e) => {
                 closed.store(true, Ordering::Relaxed);
@@ -349,4 +415,57 @@ fn write_loop(
         }
     }
     closed.store(true, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_vis_frames_are_routed_before_json_rpc() {
+        match parse_line("{\"vis\":[0,12,255,300]}\n") {
+            Some(Incoming::Vis(bars)) => assert_eq!(bars, vec![0, 12, 255, 255]),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn b64_vis_frames_decode() {
+        match parse_line("{\"vis\":\"AAz/\",\"enc\":\"b64\"}") {
+            Some(Incoming::Vis(bars)) => assert_eq!(bars, vec![0, 12, 255]),
+            other => panic!("unexpected {other:?}"),
+        }
+        // Key order is not guaranteed by JSON.
+        assert!(matches!(
+            parse_line("{\"enc\":\"b64\",\"vis\":\"AAA=\"}"),
+            Some(Incoming::Vis(_))
+        ));
+        assert!(parse_line("{\"vis\":\"!!\",\"enc\":\"b64\"}").is_none());
+    }
+
+    #[test]
+    fn responses_and_notifications_still_parse() {
+        assert!(matches!(
+            parse_line("{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"subscribed\":true}}"),
+            Some(Incoming::Response {
+                id: 7,
+                result: Ok(_)
+            })
+        ));
+        assert!(matches!(
+            parse_line(
+                "{\"jsonrpc\":\"2.0\",\"id\":8,\"error\":{\"code\":-32601,\"message\":\"no\"}}"
+            ),
+            Some(Incoming::Response {
+                id: 8,
+                result: Err(_)
+            })
+        ));
+        assert!(matches!(
+            parse_line("{\"jsonrpc\":\"2.0\",\"method\":\"state.changed\",\"params\":{}}"),
+            Some(Incoming::Notification { .. })
+        ));
+        assert!(parse_line("not json").is_none());
+        assert!(parse_line("   ").is_none());
+    }
 }

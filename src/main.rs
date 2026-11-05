@@ -11,6 +11,7 @@ mod config;
 mod model;
 mod platform;
 mod protocol;
+mod schedule;
 mod sound;
 mod theme;
 mod tray;

@@ -197,6 +197,7 @@ impl NiruampApp {
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Motion").size(s(11.0)).color(p.foreground));
+                let before = self.prefs.reduced_motion;
                 let current = match self.prefs.reduced_motion {
                     Some(true) => "reduced",
                     Some(false) => "normal",
@@ -225,8 +226,12 @@ impl NiruampApp {
                             self.prefs.reduced_motion = Some(false);
                         }
                     });
-                self.reduce_motion = theme::reduced_motion(&self.theme, &self.prefs);
-                self.update_prefs(ctx);
+                if self.prefs.reduced_motion != before {
+                    // Saved only on change: this used to rewrite (and fsync)
+                    // config.toml on every frame while Settings was open.
+                    self.reduce_motion = theme::reduced_motion(&self.theme, &self.prefs);
+                    self.update_prefs(ctx);
+                }
                 let mut keep = self.prefs.keep_playing;
                 if ui
                     .checkbox(

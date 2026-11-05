@@ -138,6 +138,10 @@ pub(crate) struct VisState {
     pub(crate) last_poll: Instant,
     pub(crate) last_step: Instant,
     pub(crate) stop_sent: bool,
+    /// The spectrum is wanted right now (visible, enabled, playing/paused).
+    pub(crate) active: bool,
+    /// `displayed` has reached `target`; no easing frame is needed.
+    pub(crate) settled: bool,
 }
 
 impl Default for VisState {
@@ -153,6 +157,8 @@ impl Default for VisState {
             last_poll: Instant::now() - Duration::from_secs(10),
             last_step: Instant::now(),
             stop_sent: true,
+            active: false,
+            settled: true,
         }
     }
 }
@@ -506,8 +512,9 @@ impl NiruampApp {
     }
 
     pub(crate) fn request(&mut self, method: &str, params: Value, kind: Option<PendingKind>) {
-        let is_vis_data = matches!(kind, Some(PendingKind::VisData));
+        let quiet = matches!(kind, Some(PendingKind::VisData));
         let sent = match self.backend.as_ref() {
+            Some(b) if quiet => b.client.send_quiet(method, params),
             Some(b) => b.client.send(method, params),
             None => return,
         };
@@ -522,12 +529,8 @@ impl NiruampApp {
                         },
                     );
                 }
-                // Responses do not drive their own repaint storm. One bounded
-                // poll picks them up; visualization frames use the capped
-                // animation clock instead.
-                if !is_vis_data {
-                    self.ctx.request_repaint_after(Duration::from_millis(25));
-                }
+                // The response wakes the window through the protocol reader
+                // (one coalesced wake per frame); no repaint poll is needed.
             }
             Err(e) => {
                 self.connection_lost(e.to_string());
@@ -574,6 +577,9 @@ impl NiruampApp {
     fn drain_backend(&mut self, ctx: &Context) {
         let mut messages = Vec::new();
         if let Some(b) = self.backend.as_ref() {
+            // Re-arm before draining so a message that arrives during this
+            // frame wakes the next one.
+            b.client.rearm_wake();
             while let Some(msg) = b.client.try_recv() {
                 messages.push(msg);
                 if messages.len() >= 128 {
@@ -590,6 +596,7 @@ impl NiruampApp {
                 Incoming::Notification { method, params } => {
                     self.handle_notification(&method, params, ctx)
                 }
+                Incoming::Vis(_) => {}
                 Incoming::Disconnected(message) => self.connection_lost(message),
             }
         }
@@ -865,6 +872,7 @@ impl NiruampApp {
                         self.vis.displayed = shaped.clone();
                     }
                     self.vis.target = shaped;
+                    self.vis.settled = false;
                 }
             }
             (PendingKind::Play, Ok(_)) => {}
@@ -938,8 +946,8 @@ impl NiruampApp {
                         self.vis.inflight = false;
                         self.vis.requested_start = false;
                         self.vis.failed = err.to_string();
+                        // The frame scheduler wakes the window at retry_at.
                         self.vis.retry_at = Some(Instant::now() + Duration::from_secs(4));
-                        ctx.request_repaint_after(Duration::from_secs(4));
                         String::new()
                     }
                     PendingKind::Artwork { key } => {
@@ -1109,6 +1117,7 @@ impl NiruampApp {
             && matches!(self.playback.status.as_str(), "playing" | "paused")
             && !self.hidden_to_tray
             && !ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        self.vis.active = should;
         if !should {
             self.vis.retry_at = None;
         } else if self.vis.retry_at.is_some_and(|at| Instant::now() >= at) {
@@ -1125,12 +1134,10 @@ impl NiruampApp {
             );
         }
         if should && self.vis.started && !self.vis.inflight {
-            let interval = if self.reduce_motion {
-                Duration::from_millis(120)
-            } else {
-                Duration::from_millis(33)
-            };
-            if self.vis.last_poll.elapsed() >= interval {
+            let interval = self.vis_interval();
+            // A frame that lands a few ms early still counts as due, so it
+            // does not ask for an extra frame just to send this poll.
+            if self.vis.last_poll.elapsed() + crate::schedule::EARLY_TOLERANCE >= interval {
                 self.vis.last_poll = Instant::now();
                 self.vis.inflight = true;
                 self.request(
@@ -1152,20 +1159,44 @@ impl NiruampApp {
         }
     }
 
+    /// Spectrum frame interval: the poll period and the easing step.
+    pub(crate) fn vis_interval(&self) -> Duration {
+        if self.reduce_motion {
+            Duration::from_millis(120)
+        } else {
+            Duration::from_millis(33)
+        }
+    }
+
+    /// When the spectrum needs its next frame, if at all.
+    fn vis_next(&self) -> Option<Instant> {
+        if !self.vis.active {
+            return None;
+        }
+        let interval = self.vis_interval();
+        let mut next: Option<Instant> = None;
+        if self.vis.started {
+            // Poll responses arrive quietly; the next poll frame (also when
+            // the previous one is still in flight) shows them.
+            next = Some(self.vis.last_poll + interval);
+        }
+        if !self.vis.settled && !self.reduce_motion {
+            let step = self.vis.last_step + interval;
+            next = Some(next.map_or(step, |n| n.min(step)));
+        }
+        next
+    }
+
     fn advance_visualization(&mut self) {
+        let now = Instant::now();
         if self.vis.displayed.is_empty() || self.vis.target.len() != self.vis.displayed.len() {
+            self.vis.settled = true;
+            self.vis.last_step = now;
             return;
         }
-        let now = Instant::now();
         let dt = (now - self.vis.last_step).as_secs_f32().clamp(0.001, 0.2);
         self.vis.last_step = now;
-        let attack = 1.0 - (-dt / 0.045).exp();
-        let release = 1.0 - (-dt / 0.14).exp();
-        for (shown, target) in self.vis.displayed.iter_mut().zip(self.vis.target.iter()) {
-            let delta = *target - *shown;
-            let factor = if delta >= 0.0 { attack } else { release };
-            *shown += delta * factor;
-        }
+        self.vis.settled = ease(&mut self.vis.displayed, &self.vis.target, dt);
     }
 
     fn tick_geometry(&mut self, ctx: &Context) {
@@ -2563,6 +2594,22 @@ impl NiruampApp {
         }
     }
 
+    fn frame_inputs(&self, ctx: &Context) -> crate::schedule::FrameInputs {
+        let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        crate::schedule::FrameInputs {
+            now: Instant::now(),
+            hidden: self.hidden_to_tray || minimized,
+            playing: self.playback.status == "playing",
+            position: self.position_now(),
+            loading: self.playback.status == "loading",
+            vis_next: self.vis_next(),
+            toasts: self.toasts.iter().map(|t| t.created).collect(),
+            search_due: self.browser.search_due,
+            vis_retry_at: self.vis.retry_at,
+            screenshot: self.screenshot_path.is_some(),
+        }
+    }
+
     fn draw_screenshot_hook(&mut self, ctx: &Context) {
         let Some(path) = self.screenshot_path.clone() else {
             return;
@@ -2634,28 +2681,23 @@ impl eframe::App for NiruampApp {
             self.draw_toasts(ctx);
             self.draw_screenshot_hook(ctx);
         }
-        if self.playback.status == "playing" {
-            // The LED shows whole seconds; one bounded clock tick per second is
-            // enough and avoids a continuous repaint loop on software renderers.
-            ctx.request_repaint_after(Duration::from_millis(1000));
-        } else if self.playback.status == "loading" {
-            ctx.request_repaint_after(Duration::from_millis(400));
-        }
-        if self.vis.started
-            && !self.reduce_motion
-            && (self.prefs.show_visualization || self.immersive)
-        {
-            ctx.request_repaint_after(Duration::from_millis(33));
-        }
-        if !self.toasts.is_empty() {
-            ctx.request_repaint_after(Duration::from_millis(250));
-        }
-        if let Some(due) = self.browser.search_due {
-            let wait = due.saturating_duration_since(Instant::now());
-            ctx.request_repaint_after(wait + Duration::from_millis(10));
-        }
-        if self.screenshot_path.is_some() {
-            ctx.request_repaint();
+        // Expired toasts are dropped here too: the fullscreen view does not
+        // draw them, and a stale toast must not keep asking for frames.
+        let now = Instant::now();
+        self.toasts
+            .retain(|t| now.duration_since(t.created) < crate::schedule::TOAST_LIFETIME);
+        // One scheduler, one repaint request per frame.
+        let inputs = self.frame_inputs(ctx);
+        if let Some(wait) = crate::schedule::next_frame(&inputs) {
+            // egui subtracts its predicted frame time from every delay. With a
+            // 33 ms spectrum step that produced a burst of immediate frames
+            // (each early frame shortened the next delay to zero), so add it
+            // back: the frame lands on the deadline instead of before it.
+            // A zero delay would also mean two frames in egui; 1 ms is one.
+            let predicted = ctx.input(|i| i.predicted_dt).clamp(0.0, 0.1);
+            ctx.request_repaint_after(
+                wait.max(Duration::from_millis(1)) + Duration::from_secs_f32(predicted),
+            );
         }
         if !self.startup_sound_done {
             self.startup_sound_done = true;
@@ -2694,6 +2736,25 @@ pub(crate) fn decode_artwork(data: &str) -> Result<egui::ColorImage, String> {
         [rgba.width() as usize, rgba.height() as usize],
         rgba.as_raw(),
     ))
+}
+
+/// Ease `shown` toward `target` (fast attack, slower release). Returns true
+/// once every bar has arrived, so no further easing frame is needed.
+pub(crate) fn ease(shown: &mut [f32], target: &[f32], dt: f32) -> bool {
+    let attack = 1.0 - (-dt / 0.045).exp();
+    let release = 1.0 - (-dt / 0.14).exp();
+    let mut settled = true;
+    for (shown, target) in shown.iter_mut().zip(target.iter()) {
+        let delta = *target - *shown;
+        if delta.abs() < 0.004 {
+            *shown = *target;
+            continue;
+        }
+        let factor = if delta >= 0.0 { attack } else { release };
+        *shown += delta * factor;
+        settled = false;
+    }
+    settled
 }
 
 pub(crate) fn save_tab(prefs: &mut Preferences, tab: Tab) {
@@ -2735,6 +2796,20 @@ mod tests {
         let decoded = decode_artwork(&encoded).unwrap();
         assert!(decoded.size[0] <= 256 && decoded.size[1] <= 256);
         assert_eq!(decoded.size, [256, 192]);
+    }
+
+    #[test]
+    fn easing_settles_on_a_flat_spectrum() {
+        let mut shown = vec![1.0_f32; 32];
+        let target = vec![0.0_f32; 32];
+        let mut steps = 0;
+        while !ease(&mut shown, &target, 1.0 / 30.0) {
+            steps += 1;
+            assert!(steps < 60, "never settles");
+        }
+        assert!(shown.iter().all(|v| *v == 0.0));
+        // Once settled it stays settled without work.
+        assert!(ease(&mut shown, &target, 1.0 / 30.0));
     }
 
     #[test]
