@@ -1722,6 +1722,7 @@ dependencies = [
  "egui",
  "image",
  "ksni",
+ "libc",
  "raw-window-handle",
  "serde",
  "serde_json",

@@ -714,6 +714,8 @@ pub enum ThemeEvent {
 
 pub struct ThemeWatcher {
     stop: Arc<AtomicBool>,
+    /// Write end of the wake-up pipe; one byte unblocks the watcher's poll.
+    wake: Option<std::os::fd::OwnedFd>,
     handle: Option<thread::JoinHandle<()>>,
     pub rx: Receiver<ThemeEvent>,
 }
@@ -723,20 +725,215 @@ impl ThemeWatcher {
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let (tx, rx) = mpsc::channel();
+        let (wake_read, wake) = match pipe() {
+            Some((r, w)) => (Some(r), Some(w)),
+            None => (None, None),
+        };
         let handle = thread::Builder::new()
             .name("niruamp-theme-watch".into())
-            .spawn(move || watch_loop(prefs, ctx, tx, stop2))
+            .spawn(move || {
+                let notify = wake_read.and_then(|r| Inotify::new().map(|i| (i, r)));
+                match notify {
+                    Some((inotify, wake_read)) => {
+                        watch_inotify(prefs, ctx, tx, stop2, inotify, wake_read)
+                    }
+                    // Without inotify (or a pipe) fall back to the 0.3 timer.
+                    None => watch_loop(prefs, ctx, tx, stop2),
+                }
+            })
             .ok();
-        Self { stop, handle, rx }
+        Self {
+            stop,
+            wake,
+            handle,
+            rx,
+        }
     }
 }
 
 impl Drop for ThemeWatcher {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        if let Some(fd) = self.wake.take() {
+            use std::io::Write;
+            let mut file = fs::File::from(fd);
+            let _ = file.write_all(&[1]);
+        }
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
+    }
+}
+
+fn pipe() -> Option<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
+    use std::os::fd::FromRawFd;
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: pipe2 fills two new descriptors that we take ownership of.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return None;
+    }
+    unsafe {
+        Some((
+            std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+            std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+        ))
+    }
+}
+
+/// Minimal inotify wrapper: the watcher thread sleeps in `poll` until a
+/// watched directory changes or the watcher is dropped.
+struct Inotify {
+    fd: std::os::fd::OwnedFd,
+}
+
+const DIR_MASK: u32 = libc::IN_CLOSE_WRITE
+    | libc::IN_MOVED_TO
+    | libc::IN_MOVED_FROM
+    | libc::IN_CREATE
+    | libc::IN_DELETE
+    | libc::IN_ATTRIB
+    | libc::IN_DELETE_SELF
+    | libc::IN_MOVE_SELF;
+
+impl Inotify {
+    fn new() -> Option<Self> {
+        use std::os::fd::FromRawFd;
+        // SAFETY: plain syscall; a valid descriptor is owned from here on.
+        let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
+        if fd < 0 {
+            return None;
+        }
+        Some(Self {
+            fd: unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) },
+        })
+    }
+
+    /// Watch a directory (re-adding an existing watch is a no-op).
+    fn watch(&self, dir: &Path) -> bool {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: valid descriptor and NUL-terminated path.
+        unsafe {
+            libc::inotify_add_watch(self.fd.as_raw_fd(), c.as_ptr(), DIR_MASK | libc::IN_ONLYDIR)
+                >= 0
+        }
+    }
+
+    /// Discard queued events; the fingerprint decides what changed.
+    fn drain(&self) {
+        use std::os::fd::AsRawFd;
+        let mut buf = [0u8; 4096];
+        loop {
+            // SAFETY: reading into a local buffer from our own descriptor.
+            let n = unsafe {
+                libc::read(
+                    self.fd.as_raw_fd(),
+                    buf.as_mut_ptr() as *mut libc::c_void,
+                    buf.len(),
+                )
+            };
+            if n <= 0 {
+                return;
+            }
+        }
+    }
+
+    /// Wait for an event (`timeout_ms` < 0 waits forever). Returns
+    /// (inotify readable, stop requested).
+    fn wait(&self, stop: &std::os::fd::OwnedFd, timeout_ms: i32) -> (bool, bool) {
+        use std::os::fd::AsRawFd;
+        let mut fds = [
+            libc::pollfd {
+                fd: self.fd.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: stop.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        // SAFETY: two valid pollfd entries.
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
+        if n < 0 {
+            let interrupted =
+                std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted;
+            return (false, !interrupted);
+        }
+        (fds[0].revents != 0, fds[1].revents != 0)
+    }
+}
+
+/// The directories whose changes can change the resolved theme: the NIRUWM
+/// config directory and its themes directory, or the nearest parent that
+/// exists so their creation is noticed too.
+fn watch_dirs(inotify: &Inotify) {
+    let niruwm = niruwm_dir();
+    if niruwm.is_dir() {
+        inotify.watch(&niruwm);
+        let themes = niruwm.join("themes");
+        if themes.is_dir() {
+            inotify.watch(&themes);
+        }
+    } else {
+        let config = config_home();
+        if config.is_dir() {
+            inotify.watch(&config);
+        }
+    }
+}
+
+fn watch_inotify(
+    prefs: Arc<Mutex<Preferences>>,
+    ctx: egui::Context,
+    tx: Sender<ThemeEvent>,
+    stop: Arc<AtomicBool>,
+    inotify: Inotify,
+    wake: std::os::fd::OwnedFd,
+) {
+    let mut last = {
+        let p = prefs.lock().map(|p| p.clone()).unwrap_or_default();
+        fingerprint(&p)
+    };
+    while !stop.load(Ordering::Relaxed) {
+        watch_dirs(&inotify);
+        let (_, stopped) = inotify.wait(&wake, -1);
+        if stopped || stop.load(Ordering::Relaxed) {
+            break;
+        }
+        // Debounce: editors write in several steps. Wait until the directory
+        // has been quiet for 320 ms (at most ~2 s) before resolving.
+        let started = Instant::now();
+        loop {
+            inotify.drain();
+            let (more, stopped) = inotify.wait(&wake, 320);
+            if stopped {
+                return;
+            }
+            if !more || started.elapsed() > Duration::from_secs(2) {
+                break;
+            }
+        }
+        inotify.drain();
+        let current = prefs.lock().map(|p| p.clone()).unwrap_or_default();
+        let now = fingerprint(&current);
+        if now == last {
+            continue;
+        }
+        last = now;
+        match resolve(&current) {
+            Ok(theme) => {
+                let _ = tx.send(ThemeEvent::Updated(Box::new(theme)));
+            }
+            Err(e) => {
+                let _ = tx.send(ThemeEvent::Warning(e));
+            }
+        }
+        ctx.request_repaint();
     }
 }
 
@@ -777,6 +974,7 @@ fn fingerprint(prefs: &Preferences) -> Fingerprint {
     }
 }
 
+/// Timer fallback, used only when inotify is unavailable.
 fn watch_loop(
     prefs: Arc<Mutex<Preferences>>,
     ctx: egui::Context,
@@ -1029,6 +1227,29 @@ mod tests {
             }
         }
         assert!(warned);
+    }
+
+    #[test]
+    fn watcher_notices_a_niruwm_directory_created_later() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("watch-late");
+        let _ = fs::remove_dir_all(env.dir());
+        let prefs = Arc::new(Mutex::new(Preferences::default()));
+        let watcher = ThemeWatcher::spawn(prefs, egui::Context::default());
+        thread::sleep(Duration::from_millis(200));
+        assert!(watcher.rx.try_recv().is_err(), "no event without a change");
+        env.write("config.toml", "theme = \"niru-satie\"\n");
+        let event = watcher.rx.recv_timeout(Duration::from_secs(4));
+        assert!(
+            matches!(event, Ok(ThemeEvent::Updated(ref t)) if t.name == "niru-satie"),
+            "{event:?}"
+        );
+        let started = Instant::now();
+        drop(watcher);
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "drop is prompt"
+        );
     }
 
     #[test]
