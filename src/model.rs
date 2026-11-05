@@ -196,6 +196,14 @@ pub struct Capabilities {
     pub backend_version: String,
     #[serde(default)]
     pub protocol_version: u32,
+    /// Protocol minor version; absent (0) before NPLAY 1.8.0.
+    #[serde(default)]
+    pub protocol_minor: u32,
+    /// NPLAY 1.8.0+: `visualization.subscribe` pushes frames.
+    #[serde(default)]
+    pub visualization_stream: bool,
+    #[serde(default)]
+    pub visualization_max_fps: u32,
     #[serde(default)]
     pub messages: Vec<String>,
 }

@@ -125,6 +125,31 @@ pub(crate) struct SettingsState {
     pub(crate) pending_toggle: Option<String>,
 }
 
+/// Bars requested from NPLAY (the 0.3 look).
+pub(crate) const VIS_BARS: u32 = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VisTransport {
+    /// NPLAY 1.7.x: `visualization.start` + `visualization.data` polls.
+    Poll,
+    /// NPLAY 1.8.0+: `visualization.subscribe` pushes frames.
+    Stream,
+}
+
+/// Which transport to use for the advertised capabilities.
+pub(crate) fn vis_transport(caps: &Capabilities, stream_unsupported: bool) -> VisTransport {
+    if caps.visualization && caps.visualization_stream && !stream_unsupported {
+        VisTransport::Stream
+    } else {
+        VisTransport::Poll
+    }
+}
+
+/// CAVA byte (0-255) to display height, log-shaped for visibility.
+pub(crate) fn shape_bar(b: u8) -> f32 {
+    (b as f32 / 255.0).clamp(0.0, 1.0).powf(0.62)
+}
+
 pub(crate) struct VisState {
     pub(crate) requested_start: bool,
     pub(crate) started: bool,
@@ -142,6 +167,11 @@ pub(crate) struct VisState {
     pub(crate) active: bool,
     /// `displayed` has reached `target`; no easing frame is needed.
     pub(crate) settled: bool,
+    pub(crate) transport: VisTransport,
+    /// The server advertised the stream but rejected the method.
+    pub(crate) stream_unsupported: bool,
+    pub(crate) subscribed_fps: u32,
+    pub(crate) last_frame: Instant,
 }
 
 impl Default for VisState {
@@ -159,6 +189,10 @@ impl Default for VisState {
             stop_sent: true,
             active: false,
             settled: true,
+            transport: VisTransport::Poll,
+            stream_unsupported: false,
+            subscribed_fps: 0,
+            last_frame: Instant::now(),
         }
     }
 }
@@ -180,6 +214,7 @@ pub(crate) enum PendingKind {
     Settings,
     Artwork { key: String },
     VisStart,
+    VisSubscribe,
     VisData,
     Play,
     Snapshot,
@@ -571,6 +606,7 @@ impl NiruampApp {
                 self.backend = Some(b);
                 self.backend_error = None;
                 self.pending.clear();
+                self.vis.stream_unsupported = false;
                 self.initialize_from_backend(ctx);
                 self.toast("NPLAY connected", false);
             }
@@ -602,7 +638,7 @@ impl NiruampApp {
                 Incoming::Notification { method, params } => {
                     self.handle_notification(&method, params, ctx)
                 }
-                Incoming::Vis(_) => {}
+                Incoming::Vis(bars) => self.apply_vis_frame(bars),
                 Incoming::Disconnected(message) => self.connection_lost(message),
             }
         }
@@ -858,7 +894,7 @@ impl NiruampApp {
                     }
                 }
             }
-            (PendingKind::VisStart, Ok(_)) => {
+            (PendingKind::VisSubscribe, Ok(_)) | (PendingKind::VisStart, Ok(_)) => {
                 self.vis.started = true;
                 self.vis.requested_start = false;
                 self.vis.inflight = false;
@@ -869,11 +905,7 @@ impl NiruampApp {
             (PendingKind::VisData, Ok(value)) => {
                 self.vis.inflight = false;
                 if let Ok(r) = serde_json::from_value::<VisualizationData>(value) {
-                    let shaped: Vec<f32> = r
-                        .bars
-                        .into_iter()
-                        .map(|b| ((b as f32 / 255.0).clamp(0.0, 1.0)).powf(0.62))
-                        .collect();
+                    let shaped: Vec<f32> = r.bars.into_iter().map(shape_bar).collect();
                     if shaped.len() != self.vis.displayed.len() {
                         self.vis.displayed = shaped.clone();
                     }
@@ -947,7 +979,13 @@ impl NiruampApp {
                         self.request("state.snapshot", json!({}), Some(PendingKind::Snapshot));
                         "Playback failed".to_string()
                     }
-                    PendingKind::VisStart | PendingKind::VisData => {
+                    PendingKind::VisSubscribe if err.code == -32601 => {
+                        // Advertised but not understood: use the 1.0 poll.
+                        self.vis.stream_unsupported = true;
+                        self.vis.requested_start = false;
+                        String::new()
+                    }
+                    PendingKind::VisStart | PendingKind::VisSubscribe | PendingKind::VisData => {
                         self.vis.started = false;
                         self.vis.inflight = false;
                         self.vis.requested_start = false;
@@ -1043,10 +1081,7 @@ impl NiruampApp {
     pub(crate) fn hide_to_tray(&mut self, ctx: &Context) {
         if self.tray.is_some() && self.prefs.tray_enabled {
             self.hidden_to_tray = true;
-            self.vis.target.clear();
-            self.vis.displayed.clear();
-            self.vis.started = false;
-            self.request("visualization.stop", json!({}), None);
+            self.stop_visualization();
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         } else {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
@@ -1134,35 +1169,101 @@ impl NiruampApp {
         if should && !self.vis.started && !self.vis.requested_start && self.vis.failed.is_empty() {
             self.vis.requested_start = true;
             self.vis.stop_sent = false;
-            self.request(
-                "visualization.start",
-                json!({}),
-                Some(PendingKind::VisStart),
-            );
-        }
-        if should && self.vis.started && !self.vis.inflight {
-            let interval = self.vis_interval();
-            // A frame that lands a few ms early still counts as due, so it
-            // does not ask for an extra frame just to send this poll.
-            if self.vis.last_poll.elapsed() + crate::schedule::EARLY_TOLERANCE >= interval {
-                self.vis.last_poll = Instant::now();
-                self.vis.inflight = true;
-                self.request(
-                    "visualization.data",
-                    json!({"bars": 32}),
-                    Some(PendingKind::VisData),
-                );
+            self.vis.transport = vis_transport(&self.capabilities, self.vis.stream_unsupported);
+            match self.vis.transport {
+                VisTransport::Stream => self.subscribe_visualization(),
+                VisTransport::Poll => self.request(
+                    "visualization.start",
+                    json!({}),
+                    Some(PendingKind::VisStart),
+                ),
             }
         }
-        if !should && self.vis.started && !self.vis.stop_sent {
-            self.vis.stop_sent = true;
-            self.vis.started = false;
-            self.vis.target.clear();
-            self.vis.displayed.clear();
-            self.request("visualization.stop", json!({}), None);
+        if should
+            && self.vis.started
+            && self.vis.transport == VisTransport::Stream
+            && self.vis.subscribed_fps != self.vis_fps()
+        {
+            // Same connection: a second subscribe replaces the parameters.
+            self.subscribe_visualization();
+        }
+        if should && self.vis.started && self.vis.transport == VisTransport::Poll {
+            if self.playback.status == "paused" {
+                // Nothing to sample while paused: ease to a flat spectrum and
+                // stop polling (NPLAY then stops a poll-only CAVA when idle).
+                if self.vis.target.iter().any(|v| *v > 0.0) {
+                    self.vis.target.iter_mut().for_each(|v| *v = 0.0);
+                    self.vis.settled = false;
+                }
+            } else if !self.vis.inflight {
+                let interval = self.vis_interval();
+                // A frame that lands a few ms early still counts as due, so it
+                // does not ask for an extra frame just to send this poll.
+                if self.vis.last_poll.elapsed() + crate::schedule::EARLY_TOLERANCE >= interval {
+                    self.vis.last_poll = Instant::now();
+                    self.vis.inflight = true;
+                    self.request(
+                        "visualization.data",
+                        json!({"bars": VIS_BARS}),
+                        Some(PendingKind::VisData),
+                    );
+                }
+            }
+        }
+        if !should && (self.vis.started || self.vis.requested_start) && !self.vis.stop_sent {
+            self.stop_visualization();
         }
         if !self.capabilities.visualization {
             self.vis.started = false;
+        }
+    }
+
+    fn subscribe_visualization(&mut self) {
+        let fps = self.vis_fps();
+        self.vis.subscribed_fps = fps;
+        self.request(
+            "visualization.subscribe",
+            json!({"bars": VIS_BARS, "fps": fps, "encoding": "b64"}),
+            Some(PendingKind::VisSubscribe),
+        );
+    }
+
+    /// End the spectrum on the server: unsubscribe the stream, or stop the
+    /// 1.0 poll path so NPLAY can stop CAVA.
+    pub(crate) fn stop_visualization(&mut self) {
+        let method = match self.vis.transport {
+            VisTransport::Stream => "visualization.unsubscribe",
+            VisTransport::Poll => "visualization.stop",
+        };
+        self.vis.stop_sent = true;
+        self.vis.started = false;
+        self.vis.target.clear();
+        self.vis.displayed.clear();
+        self.vis.settled = true;
+        self.request(method, json!({}), None);
+    }
+
+    /// A pushed frame from `visualization.subscribe`. During silence NPLAY
+    /// sends one all-zero frame and then nothing: the last frame stays.
+    fn apply_vis_frame(&mut self, bars: Vec<u8>) {
+        if self.vis.transport != VisTransport::Stream || !self.vis.started || bars.is_empty() {
+            return;
+        }
+        let shaped: Vec<f32> = bars.into_iter().map(shape_bar).collect();
+        if shaped.len() != self.vis.displayed.len() {
+            self.vis.displayed = shaped.clone();
+        }
+        self.vis.target = shaped;
+        self.vis.settled = false;
+        self.vis.last_frame = Instant::now();
+    }
+
+    /// Spectrum frames per second (stream rate, poll rate, easing rate).
+    pub(crate) fn vis_fps(&self) -> u32 {
+        if self.reduce_motion {
+            8
+        } else {
+            30
         }
     }
 
@@ -1188,11 +1289,7 @@ impl NiruampApp {
 
     /// Spectrum frame interval: the poll period and the easing step.
     pub(crate) fn vis_interval(&self) -> Duration {
-        if self.reduce_motion {
-            Duration::from_millis(120)
-        } else {
-            Duration::from_millis(33)
-        }
+        Duration::from_secs(1) / self.vis_fps().max(1)
     }
 
     /// When the spectrum needs its next frame, if at all.
@@ -1202,13 +1299,19 @@ impl NiruampApp {
         }
         let interval = self.vis_interval();
         let mut next: Option<Instant> = None;
-        if self.vis.started {
+        let polling = self.vis.transport == VisTransport::Poll && self.playback.status != "paused";
+        if self.vis.started && polling {
             // Poll responses arrive quietly; the next poll frame (also when
             // the previous one is still in flight) shows them.
             next = Some(self.vis.last_poll + interval);
         }
         if !self.vis.settled && !self.reduce_motion {
-            let step = self.vis.last_step + interval;
+            let mut step = self.vis.last_step + interval;
+            if self.vis.transport == VisTransport::Stream {
+                // Pushed frames wake the window themselves; easing frames are
+                // only needed once they stop (silence), not between them.
+                step = step.max(self.vis.last_frame + interval * 3 / 2);
+            }
             next = Some(next.map_or(step, |n| n.min(step)));
         }
         next
@@ -2741,7 +2844,9 @@ impl eframe::App for NiruampApp {
         }
         self.window_state.save().ok();
         self.prefs.save().ok();
-        self.request("visualization.stop", json!({}), None);
+        if self.vis.started || self.vis.requested_start {
+            self.stop_visualization();
+        }
         if let Some(b) = self.backend.take() {
             b.shutdown(self.prefs.keep_playing);
         }
@@ -2824,6 +2929,174 @@ mod tests {
         let decoded = decode_artwork(&encoded).unwrap();
         assert!(decoded.size[0] <= 256 && decoded.size[1] <= 256);
         assert_eq!(decoded.size, [256, 192]);
+    }
+
+    /// A fake NPLAY speaking protocol 1 over a real Unix socket. `mode`:
+    /// "stream" (1.8 subscribe + pushed b64 frames), "old" (1.7, polls only),
+    /// "broken" (advertises the stream, rejects the method).
+    fn fake_nplay(mode: &'static str) -> (std::path::PathBuf, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, BufReader, Write};
+        let dir = std::env::temp_dir().join(format!(
+            "niruamp-fake-{mode}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("control.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut out = stream.try_clone().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            let mut send = |v: Value| {
+                let mut text = serde_json::to_string(&v).unwrap();
+                text.push('\n');
+                out.write_all(text.as_bytes()).unwrap();
+            };
+            while {
+                line.clear();
+                reader.read_line(&mut line).unwrap_or(0) > 0
+            } {
+                let req: Value = serde_json::from_str(line.trim()).unwrap();
+                let id = req["id"].clone();
+                match req["method"].as_str().unwrap_or("") {
+                    "initialize" => send(json!({"jsonrpc": "2.0", "id": id, "result": {
+                        "protocol_version": 1,
+                        "capabilities": {
+                            "visualization": true,
+                            "visualization_stream": mode != "old",
+                            "protocol_minor": if mode == "old" { 0 } else { 1 },
+                        }
+                    }})),
+                    "visualization.subscribe" if mode == "stream" => {
+                        assert_eq!(req["params"]["encoding"], "b64");
+                        send(json!({"jsonrpc": "2.0", "id": id, "result": {"subscribed": true}}));
+                        send(json!({"vis": "AAz/", "enc": "b64"}));
+                        send(json!({"vis": "AAAA", "enc": "b64"}));
+                    }
+                    "visualization.data" => send(json!({"jsonrpc": "2.0", "id": id,
+                        "result": {"bars": [1, 2, 3]}})),
+                    _ => send(json!({"jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32601, "message": "Method not found"}})),
+                }
+            }
+        });
+        (path, handle)
+    }
+
+    fn recv(client: &crate::protocol::Client) -> Incoming {
+        client
+            .recv_timeout(Duration::from_secs(3))
+            .expect("message from fake NPLAY")
+    }
+
+    #[test]
+    fn fake_nplay_1_8_streams_and_1_7_falls_back_to_polling() {
+        use crate::protocol::Client;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // NPLAY 1.8: subscribe, then pushed frames routed as Vis.
+        let (path, server) = fake_nplay("stream");
+        let (client, snap) = Client::connect(&path).unwrap();
+        assert_eq!(
+            vis_transport(&snap.capabilities, false),
+            VisTransport::Stream
+        );
+        let id = client
+            .send(
+                "visualization.subscribe",
+                json!({"bars": VIS_BARS, "fps": 30, "encoding": "b64"}),
+            )
+            .unwrap();
+        assert!(matches!(recv(&client), Incoming::Response { id: r, result: Ok(_) } if r == id));
+        assert!(matches!(recv(&client), Incoming::Vis(ref b) if b == &vec![0, 12, 255]));
+        assert!(matches!(recv(&client), Incoming::Vis(ref b) if b == &vec![0, 0, 0]));
+        // The reader thread keeps the socket open; the server thread ends
+        // with the test process.
+        drop((client, server));
+
+        // NPLAY 1.7: no stream capability, the poll path answers and its
+        // quiet response does not wake the UI; a normal one wakes it once.
+        let (path, server) = fake_nplay("old");
+        let (client, snap) = Client::connect(&path).unwrap();
+        assert_eq!(vis_transport(&snap.capabilities, false), VisTransport::Poll);
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        client.set_wake(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        client.rearm_wake();
+        client
+            .send_quiet("visualization.data", json!({"bars": 3}))
+            .unwrap();
+        assert!(
+            matches!(recv(&client), Incoming::Response { result: Ok(ref v), .. } if v["bars"] == json!([1, 2, 3]))
+        );
+        assert_eq!(wakes.load(Ordering::SeqCst), 0, "quiet poll must not wake");
+        client
+            .send("visualization.data", json!({"bars": 3}))
+            .unwrap();
+        client
+            .send("visualization.data", json!({"bars": 3}))
+            .unwrap();
+        recv(&client);
+        recv(&client);
+        assert_eq!(
+            wakes.load(Ordering::SeqCst),
+            1,
+            "two messages, one coalesced wake"
+        );
+        // The reader thread keeps the socket open; the server thread ends
+        // with the test process.
+        drop((client, server));
+
+        // Advertised but rejected: -32601 selects the poll path.
+        let (path, server) = fake_nplay("broken");
+        let (client, snap) = Client::connect(&path).unwrap();
+        client
+            .send("visualization.subscribe", json!({"bars": VIS_BARS}))
+            .unwrap();
+        let unsupported = matches!(recv(&client), Incoming::Response { result: Err(ref e), .. } if e.code == -32601);
+        assert!(unsupported);
+        assert_eq!(
+            vis_transport(&snap.capabilities, unsupported),
+            VisTransport::Poll
+        );
+        // The reader thread keeps the socket open; the server thread ends
+        // with the test process.
+        drop((client, server));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn stream_is_chosen_only_when_advertised_with_cava() {
+        let mut caps = Capabilities {
+            visualization: true,
+            ..Default::default()
+        };
+        assert_eq!(vis_transport(&caps, false), VisTransport::Poll);
+        caps.visualization_stream = true;
+        assert_eq!(vis_transport(&caps, false), VisTransport::Stream);
+        assert_eq!(vis_transport(&caps, true), VisTransport::Poll);
+        caps.visualization = false;
+        assert_eq!(vis_transport(&caps, false), VisTransport::Poll);
+    }
+
+    #[test]
+    fn nplay_1_8_capabilities_parse() {
+        let caps: Capabilities = serde_json::from_value(serde_json::json!({
+            "visualization": true, "protocol_version": 1, "protocol_minor": 1,
+            "visualization_stream": true, "visualization_encodings": ["json", "b64"],
+            "visualization_max_fps": 30
+        }))
+        .unwrap();
+        assert!(caps.visualization_stream);
+        assert_eq!(caps.protocol_minor, 1);
+        let old: Capabilities =
+            serde_json::from_value(serde_json::json!({"visualization": true})).unwrap();
+        assert!(!old.visualization_stream);
+        assert_eq!(old.protocol_minor, 0);
     }
 
     #[test]

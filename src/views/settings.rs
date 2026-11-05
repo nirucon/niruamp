@@ -540,17 +540,11 @@ impl NiruampApp {
                     self.retry_backend(ctx);
                 }
                 if ui.button("STOP VISUALIZER").clicked() {
-                    self.request(
-                        "visualization.stop",
-                        json!({}),
-                        Some(PendingKind::Generic {
-                            label: "Visualizer stopped".into(),
-                            quiet: false,
-                        }),
-                    );
-                    self.vis.started = false;
-                    self.vis.target.clear();
-                    self.vis.displayed.clear();
+                    self.stop_visualization();
+                    // Not stop_sent: the next visible frame starts it again,
+                    // exactly as the 0.3 button did.
+                    self.vis.stop_sent = false;
+                    self.toast("Visualizer stopped", false);
                 }
             });
             ui.label(RichText::new("Standalone `nplay`, its diagnostics, terminal UI and regression suite never require NIRUAMP or a display server.").size(s(9.0)).color(p.muted));
