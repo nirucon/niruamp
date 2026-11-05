@@ -197,13 +197,90 @@ impl Default for VisState {
     }
 }
 
-#[derive(Default)]
+/// Decoded artwork is capped at this edge length (see `decode_artwork`).
+pub(crate) const ARTWORK_MAX_EDGE: u32 = 256;
+/// LRU bounds for decoded artwork textures: entries and RGBA bytes.
+pub(crate) const ARTWORK_CACHE_ITEMS: usize = 8;
+pub(crate) const ARTWORK_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
+/// A small LRU of artwork textures, bounded by count and decoded bytes.
+pub(crate) struct LruBytes<T> {
+    entries: VecDeque<(String, usize, T)>,
+    bytes: usize,
+    max_items: usize,
+    max_bytes: usize,
+}
+
+impl<T> LruBytes<T> {
+    pub(crate) fn new(max_items: usize, max_bytes: usize) -> Self {
+        Self {
+            entries: VecDeque::new(),
+            bytes: 0,
+            max_items,
+            max_bytes,
+        }
+    }
+
+    pub(crate) fn insert(&mut self, key: String, bytes: usize, value: T) {
+        self.remove(&key);
+        self.entries.push_back((key, bytes, value));
+        self.bytes += bytes;
+        while self.entries.len() > self.max_items
+            || (self.bytes > self.max_bytes && self.entries.len() > 1)
+        {
+            if let Some((_, b, _)) = self.entries.pop_front() {
+                self.bytes -= b;
+            }
+        }
+    }
+
+    fn remove(&mut self, key: &str) {
+        if let Some(i) = self.entries.iter().position(|(k, _, _)| k == key) {
+            if let Some((_, b, _)) = self.entries.remove(i) {
+                self.bytes -= b;
+            }
+        }
+    }
+
+    /// Look up and mark as most recently used.
+    pub(crate) fn get(&mut self, key: &str) -> Option<&T> {
+        let i = self.entries.iter().position(|(k, _, _)| k == key)?;
+        if i + 1 != self.entries.len() {
+            let entry = self.entries.remove(i)?;
+            self.entries.push_back(entry);
+        }
+        self.entries.back().map(|(_, _, v)| v)
+    }
+
+    pub(crate) fn contains_key(&self, key: &str) -> bool {
+        self.entries.iter().any(|(k, _, _)| k == key)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
 pub(crate) struct ArtworkStore {
-    pub(crate) cache: HashMap<String, TextureHandle>,
-    pub(crate) order: VecDeque<String>,
+    pub(crate) cache: LruBytes<TextureHandle>,
     pub(crate) inflight: HashSet<String>,
     pub(crate) missing: HashSet<String>,
     pub(crate) current: Option<String>,
+}
+
+impl Default for ArtworkStore {
+    fn default() -> Self {
+        Self {
+            cache: LruBytes::new(ARTWORK_CACHE_ITEMS, ARTWORK_CACHE_BYTES),
+            inflight: HashSet::new(),
+            missing: HashSet::new(),
+            current: None,
+        }
+    }
 }
 
 pub(crate) enum PendingKind {
@@ -660,15 +737,11 @@ impl NiruampApp {
         while let Ok((key, result)) = self.decode_rx.try_recv() {
             match result {
                 Ok(image) => {
+                    let bytes = image.pixels.len() * 4;
                     let texture =
                         ctx.load_texture(key.clone(), image, egui::TextureOptions::LINEAR);
-                    self.artwork.cache.insert(key.clone(), texture);
-                    self.artwork.order.push_back(key);
-                    while self.artwork.order.len() > 8 {
-                        if let Some(old) = self.artwork.order.pop_front() {
-                            self.artwork.cache.remove(&old);
-                        }
-                    }
+                    // Evicted handles free their GPU texture when dropped.
+                    self.artwork.cache.insert(key, bytes, texture);
                 }
                 Err(_) => {
                     self.artwork.missing.insert(key);
@@ -2862,8 +2935,12 @@ pub(crate) fn decode_artwork(data: &str) -> Result<egui::ColorImage, String> {
         .decode(data.as_bytes())
         .map_err(|e| e.to_string())?;
     let image = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-    let image = if image.width() > 256 || image.height() > 256 {
-        image.resize(256, 256, image::imageops::FilterType::Triangle)
+    let image = if image.width() > ARTWORK_MAX_EDGE || image.height() > ARTWORK_MAX_EDGE {
+        image.resize(
+            ARTWORK_MAX_EDGE,
+            ARTWORK_MAX_EDGE,
+            image::imageops::FilterType::Triangle,
+        )
     } else {
         image
     };
@@ -3114,6 +3191,33 @@ mod tests {
         assert!(shown.iter().all(|v| *v == 0.0));
         // Once settled it stays settled without work.
         assert!(ease(&mut shown, &target, 1.0 / 30.0));
+    }
+
+    #[test]
+    fn artwork_cache_is_bounded_by_count_and_bytes() {
+        let edge = ARTWORK_MAX_EDGE as usize;
+        let full = edge * edge * 4;
+        let mut lru = LruBytes::new(ARTWORK_CACHE_ITEMS, ARTWORK_CACHE_BYTES);
+        for i in 0..50 {
+            lru.insert(format!("k{i}"), full, i);
+        }
+        assert_eq!(lru.len(), ARTWORK_CACHE_ITEMS);
+        assert!(lru.bytes() <= ARTWORK_CACHE_BYTES);
+        assert!(lru.bytes() <= 64 * 1024 * 1024, "assignment bound");
+        // Least recently used goes first; a lookup refreshes an entry.
+        assert!(lru.get("k42").is_some());
+        lru.insert("new".into(), full, 99);
+        assert!(lru.contains_key("k42"));
+        assert!(!lru.contains_key("k43"));
+        // The byte budget wins over the count.
+        let mut small = LruBytes::new(100, 10);
+        small.insert("a".into(), 6, ());
+        small.insert("b".into(), 6, ());
+        assert_eq!(small.len(), 1);
+        assert!(small.contains_key("b"));
+        // Re-inserting a key replaces it instead of double counting.
+        small.insert("b".into(), 4, ());
+        assert_eq!(small.bytes(), 4);
     }
 
     #[test]
