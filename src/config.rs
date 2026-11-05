@@ -70,6 +70,9 @@ pub fn instance_socket() -> PathBuf {
     runtime_home().join("niruamp").join("instance.sock")
 }
 
+/// Spectrum frame rates offered in Settings.
+pub const VIS_FPS_CHOICES: [u32; 3] = [30, 20, 15];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
@@ -88,6 +91,11 @@ pub struct Preferences {
     pub playlist_visible: bool,
     pub window_shade: bool,
     pub nplay_bin: String,
+    /// Stop the spectrum (and NPLAY's CAVA) while the window is on another
+    /// workspace, hidden or fully covered. Minimized/tray always pause.
+    pub pause_hidden_visualization: bool,
+    /// Spectrum frame rate: 30, 20 or 15.
+    pub visualization_fps: u32,
 }
 
 impl Default for Preferences {
@@ -106,6 +114,8 @@ impl Default for Preferences {
             playlist_visible: true,
             window_shade: false,
             nplay_bin: "nplay".into(),
+            pause_hidden_visualization: true,
+            visualization_fps: 30,
         }
     }
 }
@@ -124,6 +134,9 @@ impl Preferences {
         };
         if prefs.theme.trim().is_empty() || prefs.theme.len() > 80 {
             prefs.theme = "auto".into();
+        }
+        if !VIS_FPS_CHOICES.contains(&prefs.visualization_fps) {
+            prefs.visualization_fps = 30;
         }
         if prefs.nplay_bin.trim().is_empty() {
             prefs.nplay_bin = "nplay".into();
@@ -204,4 +217,21 @@ pub fn atomic_toml<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     f.sync_all().map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| format!("cannot replace {}: {e}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_config_gets_visualization_defaults() {
+        // A 0.3 config.toml has neither key: the new behaviour is on, 30 fps.
+        let prefs: Preferences =
+            toml::from_str("theme = \"auto\"\nshow_visualization = true\n").unwrap();
+        assert!(prefs.pause_hidden_visualization);
+        assert_eq!(prefs.visualization_fps, 30);
+        let text = toml::to_string_pretty(&prefs).unwrap();
+        let back: Preferences = toml::from_str(&text).unwrap();
+        assert_eq!(back.visualization_fps, 30);
+    }
 }

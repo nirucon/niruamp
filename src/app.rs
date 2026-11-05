@@ -1263,14 +1263,17 @@ impl NiruampApp {
         if self.reduce_motion {
             8
         } else {
-            30
+            self.prefs.visualization_fps.clamp(1, 30)
         }
     }
 
     /// False when the window manager unmapped the window (another
     /// workspace), marked it hidden, or it is fully covered.
     pub(crate) fn window_visible(&self) -> bool {
-        self.visibility.as_ref().is_none_or(|v| v.visible())
+        // With pausing turned off this is the 0.3 behaviour: only minimized
+        // and tray-hidden count as not visible.
+        !self.prefs.pause_hidden_visualization
+            || self.visibility.as_ref().is_none_or(|v| v.visible())
     }
 
     fn probe_visibility(&mut self, ctx: &Context, frame: &eframe::Frame) {

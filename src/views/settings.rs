@@ -31,6 +31,8 @@ impl NiruampApp {
                 ui.add_space(s(2.0));
                 self.settings_appearance(ui, ctx);
                 ui.add_space(s(10.0));
+                self.settings_visualization(ui, ctx);
+                ui.add_space(s(10.0));
                 self.settings_playback(ui, ctx);
                 ui.add_space(s(10.0));
                 self.settings_sources(ui, ctx);
@@ -265,6 +267,52 @@ impl NiruampApp {
                     );
                 }
             });
+        });
+    }
+
+    fn settings_visualization(&mut self, ui: &mut Ui, ctx: &Context) {
+        let p = self.palette();
+        let scale = self.prefs.scale;
+        let s = move |v: f32| v * scale;
+        Self::setting_frame(&p, scale, ui, "VISUALIZATION", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let mut pause = self.prefs.pause_hidden_visualization;
+                if ui
+                    .checkbox(
+                        &mut pause,
+                        RichText::new("Pause spectrum when the window is not visible")
+                            .size(s(11.0)),
+                    )
+                    .changed()
+                {
+                    self.prefs.pause_hidden_visualization = pause;
+                    self.update_prefs(ctx);
+                }
+                ui.label(
+                    RichText::new("Frame rate")
+                        .size(s(11.0))
+                        .color(p.foreground),
+                );
+                let mut fps = self.prefs.visualization_fps;
+                egui::ComboBox::from_id_salt("vis-fps-select")
+                    .selected_text(format!("{fps} fps"))
+                    .show_ui(ui, |ui| {
+                        for choice in config::VIS_FPS_CHOICES {
+                            ui.selectable_value(&mut fps, choice, format!("{choice} fps"));
+                        }
+                    });
+                if fps != self.prefs.visualization_fps {
+                    self.prefs.visualization_fps = fps;
+                    self.update_prefs(ctx);
+                }
+            });
+            ui.label(
+                RichText::new(
+                    "Hidden: another workspace, fully covered or minimized. Lower rates save power; reduced motion uses 8 fps.",
+                )
+                .size(s(9.0))
+                .color(p.muted),
+            );
         });
     }
 
