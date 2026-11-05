@@ -514,7 +514,7 @@ impl NiruampApp {
         };
         if let Some(b) = &app.backend {
             let c = ctx.clone();
-            b.client.set_wake(Arc::new(move || c.request_repaint()));
+            b.client.set_wake(backend_wake(c));
         }
         app.initialize_from_backend(&ctx);
         app
@@ -678,7 +678,7 @@ impl NiruampApp {
         match platform::ensure_backend(&self.prefs, true) {
             Ok(b) => {
                 let c = ctx.clone();
-                b.client.set_wake(Arc::new(move || c.request_repaint()));
+                b.client.set_wake(backend_wake(c));
                 self.snapshot = b.snapshot.clone();
                 self.backend = Some(b);
                 self.backend_error = None;
@@ -2949,6 +2949,13 @@ pub(crate) fn decode_artwork(data: &str) -> Result<egui::ColorImage, String> {
         [rgba.width() as usize, rgba.height() as usize],
         rgba.as_raw(),
     ))
+}
+
+/// Wake for messages from NPLAY. `request_repaint()` (a zero delay) makes egui
+/// draw two frames per request; a 1 ms delay draws one. With 30 pushed
+/// spectrum frames per second that is the difference between 60 and 30 fps.
+pub(crate) fn backend_wake(ctx: Context) -> Arc<dyn Fn() + Send + Sync> {
+    Arc::new(move || ctx.request_repaint_after(Duration::from_millis(1)))
 }
 
 /// Ease `shown` toward `target` (fast attack, slower release). Returns true
