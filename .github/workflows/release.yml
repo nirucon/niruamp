@@ -1,0 +1,61 @@
+name: release
+
+# A pushed tag vX.Y.Z builds the prebuilt x86_64 binary that install.sh
+# downloads and publishes it with its SHA256SUMS file. Ubuntu 22.04 has glibc
+# 2.35, so the binary runs on Debian 12+ (glibc 2.36) and newer distributions.
+
+on:
+  push:
+    tags: ["v*"]
+  # Dry run on a branch: build and package, upload as a workflow artifact,
+  # publish nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - name: System build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libx11-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libgl1-mesa-dev
+      - name: Check the tag matches Cargo.toml
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then test "v$version" = "$GITHUB_REF_NAME"; fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Test
+        run: cargo test --locked
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          mkdir -p dist/pkg
+          install -m 0755 target/release/niruamp dist/pkg/niruamp
+          ./dist/pkg/niruamp --version | grep -qx "NIRUAMP $VERSION"
+          objdump -T dist/pkg/niruamp | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+          tar --owner=0 --group=0 --numeric-owner -C dist/pkg \
+            -czf "dist/niruamp-$VERSION-x86_64-linux-gnu.tar.gz" niruamp
+          sha256sum "dist/niruamp-$VERSION-x86_64-linux-gnu.tar.gz" > "dist/SHA256SUMS-$VERSION"
+          cat "dist/SHA256SUMS-$VERSION"
+      - name: Keep the dry-run package
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: niruamp-dry-run
+          path: dist/*
+      - name: Publish
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="$(awk -v h="# NIRUAMP $VERSION" '$0==h{f=1;next} /^# NIRUAMP /{f=0} f' CHANGELOG.md)"
+          gh release create "$GITHUB_REF_NAME" --title "NIRUAMP $VERSION" --notes "$notes" \
+            "dist/niruamp-$VERSION-x86_64-linux-gnu.tar.gz" "dist/SHA256SUMS-$VERSION"

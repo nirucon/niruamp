@@ -1,7 +1,8 @@
 # NPLAY local control protocol (version 1)
 
 > Canonical backend document: `nplay/docs/PROTOCOL.md`. This copy travels with
-> NIRUAMP. NIRUAMP 0.3.2 requires NPLAY **1.7.3** and protocol **1**.
+> NIRUAMP. NIRUAMP 0.4.0 requires NPLAY **1.7.3** and protocol **1**; it uses
+> the visualization stream (protocol 1.1) when NPLAY **1.8.0** advertises it.
 
 NPLAY 1.7.0 adds a headless control service for graphical clients such as
 NIRUAMP. The terminal player is unchanged and does not require the service, a
@@ -150,7 +151,10 @@ service.
 | `ratings.get` / `ratings.set` | `track`, optional `rating` 0–5 | |
 | `radio.add` / `radio.delete` | `name`,`url` / `id` | |
 | `artwork.get` | `track` | Returns `mime` and base64 `data`; empty result uses `empty: true` |
-| `visualization.start` / `stop` / `data` | optional `bars` 8–96 | Requires CAVA; no synthetic data |
+| `visualization.start` / `stop` / `data` | optional `bars` 8–96 | Requires CAVA; no synthetic data. The 1.0 polling path |
+| `visualization.subscribe` | optional `bars` 8–96, `fps` 1–30, `encoding` `json`/`b64` | 1.1 (NPLAY 1.8.0): push frames to this connection |
+| `visualization.unsubscribe` | `{}` | 1.1: end the push stream on this connection |
+| `visualization.status` | `{}` | 1.1: `running`, `subscribers`, `pushed`, `suppressed`, `dropped` |
 | `settings.get` | `{}` | Sanitised; never returns secrets |
 | `settings.set` | `settings` map | Allowlisted non-secret keys only |
 | `navidrome.setup` / `navidrome.clear` | `url`,`user`,`password` / `{}` | Credentials go straight to NPLAY's 0600 secrets file |
@@ -218,8 +222,29 @@ requests, `-32010` incompatible protocol. Error `data` may include a bounded
 - Artwork fetches are limited to tracks in the reference catalogue and capped
   at 12 MiB; arbitrary filesystem reads are not exposed.
 
+## Visualization stream (protocol 1.1, NPLAY 1.8.0)
+
+NIRUAMP chooses the transport from the handshake capabilities:
+
+- `capabilities.visualization_stream && capabilities.visualization` →
+  `visualization.subscribe {"bars":32,"fps":30,"encoding":"b64"}` once while
+  the spectrum is visible, `visualization.unsubscribe` when it is not (another
+  workspace, fully covered, minimized, tray, visualizer off, stopped). The fps
+  follows Settings → Visualization (30/20/15; reduced motion 8).
+- Pushed frames are bare lines, not JSON-RPC: `{"vis":"<base64>","enc":"b64"}`
+  (or `{"vis":[0..255,…]}` with `json`). The reader routes any line with a
+  `vis` key to the visualizer before JSON-RPC handling. The first frame
+  always follows the subscribe response.
+- During silence NPLAY sends one all-zero frame and then nothing; NIRUAMP keeps
+  the last frame (flat), stops easing and draws nothing more.
+- Without the capability (NPLAY 1.7.x), or if `visualization.subscribe`
+  returns `-32601`, NIRUAMP keeps the 1.0 path: `visualization.start` and one
+  `visualization.data` poll per frame interval, no polls while paused.
+- Clients keep sending `"protocol_versions":[1]`; `protocol_minor` ≥ 1 means
+  NPLAY ≥ 1.8.0.
+
 ## Minimum versions
 
-- Protocol version: `1`
-- NPLAY minimum: `1.7.3`
-- NIRUAMP minimum: `0.3.2`
+- Protocol version: `1` (minor `1` for the visualization stream)
+- NPLAY minimum: `1.7.3`; `1.8.0` for `visualization.subscribe`
+- NIRUAMP minimum: `0.3.2`; `0.4.0` uses the stream

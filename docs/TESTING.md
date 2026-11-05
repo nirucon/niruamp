@@ -17,7 +17,16 @@ python3 -m unittest discover -s tests -v
 The Rust suite covers wire-model invariants, time formatting, PNG artwork
 decoding, standalone/builtin/custom/sparse appearance resolution, light-theme
 contrast derivation, malformed appearance recovery, malformed custom-theme
-rejection and live debounced theme reload.
+rejection and live debounced theme reload (inotify), plus (0.4.0) the frame
+scheduler deadlines, spectrum easing settling, pushed `vis` frame parsing
+(json/b64), transport selection against a fake NPLAY on a real Unix socket
+(1.8 stream, 1.7 poll, stream advertised but rejected) with quiet/coalesced
+wakes, X11 visibility transitions (and a real unmap when `DISPLAY` points at an
+X server, e.g. Xvfb), the blocking single-instance listener, preference
+defaults and the artwork LRU bounds.
+
+Energy: run with `NIRUAMP_DEBUG_FPS=1` to print frames/s and NPLAY messages/s
+every 5 s; `scripts/measure.py` samples CPU and RSS.
 
 The NPLAY suite (1.7.1+) covers the existing player/providers/statistics/theme tests plus
 the control service: handshake and capability discovery, protocol rejection,

@@ -66,14 +66,31 @@ selection or steal text focus.
   policy differences.
 - The titlebar is client-drawn for the narrow Winamp strip; dragging uses the
   native move request, and always-on-top uses the viewport window level.
+- One frame scheduler (`src/schedule.rs`): every reason to draw without input
+  (LED clock on the next whole second, spectrum step, toast fade, search
+  debounce, visualizer retry, loading, screenshot) is reduced to one deadline,
+  and `update` requests exactly one repaint per frame. egui subtracts its
+  predicted frame time from repaint delays; the scheduler adds it back so a
+  33 ms spectrum step does not decay into a burst of immediate frames.
+- Messages from NPLAY wake the UI through the protocol reader, coalesced to one
+  wake per frame. The 1.0 `visualization.data` poll response is quiet: the next
+  poll frame shows it.
 - Idle/paused: no periodic repaint. Input, backend notifications, theme changes
-  and instance activation wake the UI.
-- Playing: one bounded clock wake per second. The LED only renders whole
-  seconds; position is interpolated locally between authoritative samples.
-- Visualization: 30 Hz sampling with fast-attack/slow-release display easing and
-  log-shaped actual CAVA values; reduced motion lowers the rate. CAVA is stopped
-  when hidden, disabled, minimized to tray, or after the service's idle timeout.
+  and instance activation wake the UI. A window hidden to the tray, minimized,
+  or (by default) unmapped/fully obscured schedules no frames at all.
+- Playing: one clock frame per second. The LED only renders whole seconds;
+  position is interpolated locally between authoritative samples.
+- Visualization: NPLAY 1.8's push stream (`visualization.subscribe`, b64) or,
+  with NPLAY 1.7, polls at the same rate; at most 30 fps (Settings: 30/20/15,
+  reduced motion 8), fast-attack/slow-release easing that settles and stops on
+  a flat spectrum. The spectrum stops (unsubscribe/stop, so NPLAY stops CAVA)
+  when disabled, minimized, in the tray, or when the window cannot be seen:
+  `src/visibility.rs` watches Map/Unmap, `_NET_WM_STATE_HIDDEN` and
+  VisibilityNotify on its own X connection, blocking in `wait_for_event`.
   No synthetic bars are generated.
+- Background threads block instead of polling: the instance socket in
+  `accept`, the theme watcher in `poll` on inotify, the X visibility watcher in
+  `wait_for_event`, the RPC reader/writer on the socket and channel.
 - Lists use `show_rows` virtualization in playlist, queue, browse and grouped
   search results.
 - Container rows (album, playlist, folder, programme) are resolved through
@@ -91,8 +108,8 @@ selection or steal text focus.
   framed play icon is generated from the active palette and refreshed on theme
   changes.
 - Artwork decoding/downscaling runs in a worker thread to at most 256×256;
-  textures are capped at 8 entries. The backend artwork cache is bounded
-  separately.
+  textures live in an LRU bounded by 8 entries and 16 MiB of RGBA. The backend
+  artwork cache is bounded separately.
 
 ## Appearance resolution
 

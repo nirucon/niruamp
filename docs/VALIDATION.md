@@ -1,5 +1,60 @@
 # NIRUAMP validation report
 
+## 0.4.0 energy and efficiency (2026-11-05)
+
+Host `othala` (Debian 13, 12 cores), isolated harness: Xvfb 1600×1000, no
+compositor, Glow on llvmpipe (software GL), private D-Bus session, isolated
+`HOME`/XDG dirs, NPLAY from its tag checkout, NPLAY's `tools/fake-mpv` (no
+audio) and a synthetic CAVA (raw 8-bit, 30 fps; all-zero frames for the
+"silence" row). Each row is a 15 s sample after 3 s settling. Frames/s come
+from `NIRUAMP_DEBUG_FPS=1`; CPU and wakeups (voluntary + involuntary context
+switches) from `/proc`. "before" is the published 0.3.3 binary, "after" is
+0.4.0.
+
+NIRUAMP frames/s (the frame rate is what NIRUAMP controls; under llvmpipe every
+frame costs ~0.1 CPU-seconds spread over its rasterizer threads, so CPU % here
+scales with frames and is far higher than with a GPU):
+
+| State | 0.3.3 + NPLAY 1.8.0 | 0.4.0 + NPLAY 1.8.0 (stream) | 0.3.3 + NPLAY 1.7.3 | 0.4.0 + NPLAY 1.7.3 (poll fallback) |
+|---|---:|---:|---:|---:|
+| Playing, spectrum visible | 57–60 | **29.8** | 55–56 | **29.0–29.7** |
+| Playing, silence | 57–59 | **1.0** (flat, clock only) | 56 | 29.0 (poll path keeps polling) |
+| Playing, window unmapped (another workspace) | 58–60 | **0** (CAVA stopped) | 56–60 | **0** (CAVA stopped) |
+| Paused, visible | 58–60 | 29.8 ¹ | 56–60 | **≈1** |
+| Playing, hidden to tray | 1.0 | **0** | 1.0 | **0** |
+| Paused, hidden to tray | 0 | 0 | 0 | 0 |
+
+¹ The synthetic CAVA keeps producing bars while paused; real CAVA sees
+silence, so NPLAY sends one zero frame and NIRUAMP settles to 0–1 fps (the
+"silence" row).
+
+Other processes, playing with the spectrum visible:
+
+| Process | 0.3.3 (poll, 30 Hz) | 0.4.0 + NPLAY 1.8.0 (stream, b64) |
+|---|---:|---:|
+| NPLAY service CPU / wakeups/s | 1.7–1.8 % / 147–154 | **0.6 %** / **31** |
+| NIRUAMP main-thread wakeups/s | 1 400–1 650 | 746–762 (≈25/frame inside llvmpipe) |
+| NIRUAMP, unmapped / tray: CPU, wakeups/s | 154–198 % / 4 000+ ; 2.7–8.7 % / 87–100 | **0.0–0.07 %** / **2** ; **0.0 %** / **2** |
+| NIRUAMP RSS | 118.7–119.0 MiB | 118.5–119.1 MiB |
+
+Real NIRUWM 0.16.172 on the same Xvfb: `Super+2` unmapped the window
+(`IsUnMapped`); within 1 s NIRUAMP unsubscribed and NPLAY had stopped CAVA;
+NIRUAMP then used 0.0 % CPU and 2 wakeups/s. `Super+1` remapped it and the
+spectrum and CAVA resumed (29.3 fps).
+
+RSS breakdown (0.4.0, playing, 118.8 MiB): libLLVM 56.2 MiB and gallium
+11.5 MiB (the software GL driver), heap 24.5 MiB, the binary 8.2 MiB, anonymous
+6.2 MiB. Artwork is at most 8 × 256 KiB of decoded pixels (now also bounded to
+16 MiB). The memory is the GL stack, not NIRUAMP's caches; it is not reduced
+here without changing the renderer, which would change the look.
+
+Not verified here (needs the owner's session, deferred to niruxwork): the
+≤ 2.5 % CPU and ≤ 120 main-thread wakeups/s targets with a hardware GL driver,
+real CAVA, and the tray icon host. Under llvmpipe the GL driver alone wakes the
+main thread ~25 times per frame.
+
+## 0.3.3 report
+
 Date: 2026-10-31
 Frontend: NIRUAMP 0.3.3, tag `v0.3.3` (Rust, `eframe`/`egui` 0.29.1, Glow, ksni 0.3.7)
 Backend: NPLAY 1.7.3, control protocol 1

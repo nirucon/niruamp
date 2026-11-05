@@ -32,8 +32,10 @@ Environment:
   NPLAY_DEV_PATH        NPLAY checkout for development service startup
   NPLAY_BIN             Alternative NPLAY executable
   NIRUAMP_SCREENSHOT    Save a release-build screenshot to this path
+  NIRUAMP_DEBUG_FPS     Print frames/s and NPLAY messages/s every 5 s
 
-NPLAY 1.7.0 or newer is required. It remains fully usable standalone.";
+NPLAY 1.7.3 or newer is required (1.8.0+ for the visualization stream).
+It remains fully usable standalone.";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

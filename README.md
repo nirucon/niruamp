@@ -14,15 +14,16 @@ NIRUAMP is an optional member of the **NIRUX** suite (`nirux extras install
 niruamp`). It is only the graphical presentation and interaction layer.
 
 **NIRUAMP cannot run standalone.** [NPLAY](https://github.com/nirucon/nplay)
-1.7.1 or newer is a required runtime dependency and owns playback, queue,
+1.7.3 or newer is a required runtime dependency and owns playback, queue,
 providers, library, statistics, notifications and MPRIS. NPLAY is a complete
 standalone terminal player and continues to work without NIRUX or NIRUAMP.
 
 ## Status
 
-**0.3.3 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
+**0.4.0 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
 client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.3 or
-newer is required** and remains fully usable standalone.
+newer is required** (1.8.0+ for the visualization stream) and remains fully
+usable standalone.
 
 The repository includes the frontend, the NPLAY headless service changes and
 tests, protocol/architecture/testing documentation, an installer, desktop entry
@@ -55,8 +56,13 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 - Artwork from NPLAY's existing cache, decoded off the UI thread, bounded cache.
 - NIRUX appearance integration (all builtin themes, sparse custom themes and
   sparse `appearance.toml`) with live reload and a standalone classic fallback.
-- Real CAVA visualization with 30 Hz sampling, fast-attack/slow-release
-  smoothing and log-shaped bars; an honest unavailable state otherwise.
+- Real CAVA visualization at up to 30 fps (30/20/15 in Settings), pushed by
+  NPLAY 1.8.0's visualization stream, or polled from NPLAY 1.7.x;
+  fast-attack/slow-release smoothing and log-shaped bars; an honest unavailable
+  state otherwise. The spectrum pauses (and NPLAY stops CAVA) while the window
+  is on another workspace, covered, minimized or in the tray.
+- Frugal by design: one frame scheduler, no repaint while hidden, no polling
+  threads; see [docs/VALIDATION.md](docs/VALIDATION.md) for measurements.
 - Optional Winamp-inspired startup sound (Ogg Vorbis, embedded) that is a UI
   effect only and can be disabled in Settings.
 - One backend session, one queue, one MPRIS owner and one statistics pipeline.
@@ -64,8 +70,11 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 ## Requirements
 
 - Linux with X11 or XWayland. The UI uses `eframe`/`egui` with the Glow renderer.
-  Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0; current releases require NPLAY 1.7.2.
+  Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0.
 - **NPLAY 1.7.3+** with its normal runtime prerequisites (`mpv`, Python 3).
+  **NPLAY 1.8.0+** is recommended: NIRUAMP then uses its visualization stream
+  (`visualization.subscribe`) instead of polling, which costs NPLAY about a
+  third of the CPU. With 1.7.x the 1.0 polling path is used as a fallback.
 - Rust 1.85+ to build (the declared `rust-version`; Debian 13 ships 1.85).
 - Optional: `cava` (visualization), `yt-dlp` (YouTube), `librespot` (Spotify
   local playback), Navidrome credentials, Spotify Premium for Connect playback.
@@ -82,7 +91,7 @@ niruamp
 The installer downloads the published x86_64 Linux release binary when one is
 available and falls back to a source build otherwise. It installs to
 `~/.local/bin/niruamp`, adds a desktop entry and a scalable original icon, and
-refuses to continue when NPLAY is missing or older than 1.7.1. Set
+refuses to continue when NPLAY is missing or older than 1.7.3. Set
 `NIRUAMP_SKIP_NPLAY_CHECK=1` only for packaging experiments.
 
 ```sh
@@ -90,11 +99,12 @@ refuses to continue when NPLAY is missing or older than 1.7.1. Set
 ./install.sh --source    # always build with cargo
 ```
 
-The prebuilt archive is built in Debian 12 for x86_64 and needs
+The prebuilt archive is built by the release workflow on Ubuntu 22.04
+(glibc 2.35) for x86_64, so it runs on Debian 12+, and needs
 `libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
 
 ```sh
-tar -xzf niruamp-0.3.3-x86_64-linux-gnu.tar.gz
+tar -xzf niruamp-0.4.0-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 
