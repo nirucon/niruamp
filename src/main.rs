@@ -81,9 +81,9 @@ fn main() {
             window_state.height.max(120.0),
         )
     };
+    let backend_kind = session::backend();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("NIRUAMP")
-        .with_app_id("niruamp")
         .with_decorations(false)
         .with_resizable(true)
         .with_inner_size(inner)
@@ -91,8 +91,12 @@ fn main() {
     if let (Some(x), Some(y)) = (window_state.x, window_state.y) {
         viewport = viewport.with_position(egui::pos2(x, y));
     }
-    let backend_kind = session::backend();
+    // egui-winit applies the app id through winit's shared `with_name(app_id, "")`,
+    // which on X11 would leave WM_CLASS with an empty instance. Only Wayland needs
+    // the app id; on X11 winit derives WM_CLASS ("niruamp", "niruamp") from the
+    // executable, exactly as in 0.4.
     if backend_kind == session::Backend::Wayland {
+        viewport = viewport.with_app_id("niruamp");
         // Wayland lets only the compositor place windows. On Hyprland a rule
         // registered before the window exists opens it floating at the saved
         // geometry; elsewhere the compositor decides.

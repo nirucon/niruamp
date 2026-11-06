@@ -1,3 +1,10 @@
+# NIRUAMP 0.5.1
+
+- X11: WM_CLASS is `"niruamp", "niruamp"` again, as in 0.4. With the Wayland
+  backend compiled in, egui-winit set the app id through winit's shared name
+  attribute and left the X11 instance name empty. The app id is now applied
+  only under Wayland.
+
 # NIRUAMP 0.5.0
 
 Omarchy theme and native Wayland. In the NIRU session (NIRUWM, X11) nothing
