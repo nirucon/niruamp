@@ -20,7 +20,8 @@ standalone terminal player and continues to work without NIRUX or NIRUAMP.
 
 ## Status
 
-**0.4.0 — runnable, installable and integrated.** NIRUAMP is a Rust graphical
+**0.5.0 — runnable, installable and integrated, on NIRUX (X11) and on Wayland
+(Omarchy/Hyprland).** NIRUAMP is a Rust graphical
 client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.3 or
 newer is required** (1.8.0+ for the visualization stream) and remains fully
 usable standalone.
@@ -106,7 +107,7 @@ The prebuilt archive is built by the release workflow on Ubuntu 22.04
 `libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
 
 ```sh
-tar -xzf niruamp-0.4.0-x86_64-linux-gnu.tar.gz
+tar -xzf niruamp-0.5.0-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 

@@ -1,5 +1,51 @@
 # NIRUAMP validation report
 
+## 0.5.0 Omarchy theme and native Wayland (2026-11-06)
+
+**NIRU session regression (othala, Debian 13, NIRUWM 0.16.173, real session,
+locked screen):** 0.4.0 and 0.5.0 run one after the other with the owner's
+configuration (`theme = "auto"`, NIRUX theme Forest Vigil).
+- The release-build screenshots (`NIRUAMP_SCREENSHOT`) are identical except
+  the version text: 32 of 389 850 pixels differ, all inside the "v0.5.0"
+  label; the six most frequent colours are the same.
+- The window is covered by the lock, so the spectrum pause applies. Both draw
+  1 frame/s (the clock) in steady state: CPU 0.10 % (0.4.0) and 0.07 %
+  (0.5.0), 8.3 wakeups/s each, 124–125 MiB RSS. GLX as before; vsync on, as
+  before.
+
+**Omarchy (Omarchy 4.0 alpha, Hyprland 0.57.1, Intel laptop, 1920×1200 at
+scale 1, real session), 0.5.0 build from the release commit:**
+- Native Wayland client (`xwayland: false`), opened floating at the saved
+  position (200, 150) and size 620×560 by the placement rule, without taking
+  focus from the owner's window.
+- Theme: Auto followed the owner's Forest Vigil port (identical to NIRUX's
+  Forest Vigil palette). Live switches with `omarchy-theme-set` to Tokyo Night,
+  Catppuccin Latte (light) and back applied within the 320 ms debounce;
+  screenshots below.
+- ANR: reproduced with the first build — playing while the window sat on
+  another workspace blocked the UI thread in `eglSwapBuffers` (wchan `poll`)
+  and the `xdg_wm_base` pings went unanswered for over a minute. Fixed by not
+  waiting for vsync off a real X server. Soak with the fix, 16 min while
+  playing (6 min hidden on another workspace, 6 min visible, 4 min moving
+  between them every 10 s): 645 pings, 645 pongs, longest ping→pong 0.1 ms,
+  no "Application not responding". CPU 0.02 % hidden, 0.10 % visible.
+- Hidden on another workspace: 0 frames/s, CPU 0.00 %, 4 wakeups/s (Hyprland
+  event socket, no polling).
+- Tray: the StatusNotifierItem registers with Omarchy's shell; Activate from
+  D-Bus brought the window back from `special:niruamp` to the shown workspace.
+
+**Nested Hyprland 0.57.1 on the same machine, output 1600×1000 at scale
+1.25:** 620×560 logical window rendered at 775×700 pixels (crisp, not
+upscaled); key T pinned and unpinned the window (Hyprland pin) and saved the
+preference; another nested workspace paused it (CPU 0.00 %); a second
+`niruamp` start brought a parked window back and focused it; a compositor move
+to (300, 200) was read back and saved within 30 s and restored on restart
+(Hyprland clamps y to keep the window on the small output).
+
+Not verified with real input: dragging the deck title (StartDrag →
+`xdg_toplevel.move`) needs a physical pointer press; no input injection was
+used on the owner's machine.
+
 ## 0.4.0 energy and efficiency (2026-11-05)
 
 Host `othala` (Debian 13, 12 cores), isolated harness: Xvfb 1600×1000, no
