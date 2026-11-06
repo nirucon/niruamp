@@ -204,8 +204,47 @@ pub struct Capabilities {
     pub visualization_stream: bool,
     #[serde(default)]
     pub visualization_max_fps: u32,
+    /// NPLAY 1.8.1+ (protocol 1.2): `spotify.local_authorize` exists.
+    #[serde(default)]
+    pub spotify_local_authorize: bool,
+    /// NPLAY 1.8.1+: librespot is installed for local Spotify playback.
+    #[serde(default)]
+    pub spotify_local: bool,
+    /// NPLAY 1.8.1+: librespot has cached credentials.
+    #[serde(default)]
+    pub spotify_local_authorized: bool,
     #[serde(default)]
     pub messages: Vec<String>,
+}
+
+/// `service.error` code NPLAY 1.8.1+ sends when local Spotify playback needs
+/// authorization first.
+pub const SPOTIFY_LOCAL_UNAUTHORIZED: &str = "spotify_local_unauthorized";
+
+/// A `service.error` notification (NPLAY 1.8.1+, protocol 1.2).
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ServiceError {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub code: String,
+}
+
+impl ServiceError {
+    pub fn is_spotify_local_unauthorized(&self) -> bool {
+        self.code == SPOTIFY_LOCAL_UNAUTHORIZED
+    }
+
+    pub fn text(&self) -> String {
+        match (self.title.is_empty(), self.message.is_empty()) {
+            (false, false) => format!("{}: {}", self.title, self.message),
+            (false, true) => self.title.clone(),
+            (true, false) => self.message.clone(),
+            (true, true) => "NPLAY reported an error".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -332,6 +371,17 @@ pub struct SpotifyStatus {
     pub configured: bool,
     #[serde(default)]
     pub enabled: bool,
+    /// NPLAY 1.8.1+: `local` or `connect`.
+    #[serde(default)]
+    pub playback: String,
+    #[serde(default)]
+    pub local_available: bool,
+    #[serde(default)]
+    pub local_authorized: bool,
+    #[serde(default)]
+    pub local_running: bool,
+    #[serde(default)]
+    pub local_authorizing: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -415,6 +465,38 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(t.subtitle(), "Artist");
+    }
+
+    #[test]
+    fn spotify_local_capabilities_default_off_for_old_nplay() {
+        // NPLAY 1.8.0 (protocol 1.1) sends none of the 1.2 keys.
+        let old: Capabilities =
+            serde_json::from_str(r#"{"spotify":true,"protocol_minor":1}"#).unwrap();
+        assert!(!old.spotify_local_authorize);
+        assert!(!old.spotify_local_authorized);
+        let new: Capabilities = serde_json::from_str(
+            r#"{"protocol_minor":2,"spotify_local_authorize":true,"spotify_local":true,"spotify_local_authorized":false}"#,
+        )
+        .unwrap();
+        assert!(new.spotify_local_authorize && new.spotify_local && !new.spotify_local_authorized);
+        let status: SpotifyStatus = serde_json::from_str(r#"{"configured":true}"#).unwrap();
+        assert!(!status.local_authorized && status.playback.is_empty());
+    }
+
+    #[test]
+    fn service_error_detects_not_authorized() {
+        let e: ServiceError = serde_json::from_str(
+            r#"{"title":"Spotify playback unavailable","message":"Local Spotify playback is not authorized yet · choose Spotify → Local playback → AUTHORIZE","code":"spotify_local_unauthorized","remedy":"spotify.local_authorize"}"#,
+        )
+        .unwrap();
+        assert!(e.is_spotify_local_unauthorized());
+        assert!(e
+            .text()
+            .starts_with("Spotify playback unavailable: Local Spotify"));
+        let other: ServiceError =
+            serde_json::from_str(r#"{"title":"Spotify control unavailable"}"#).unwrap();
+        assert!(!other.is_spotify_local_unauthorized());
+        assert_eq!(other.text(), "Spotify control unavailable");
     }
 
     #[test]

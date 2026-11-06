@@ -74,6 +74,10 @@ pub(crate) enum Modal {
         name: String,
         url: String,
     },
+    /// Local Spotify playback needs librespot authorization (NPLAY 1.8.1+).
+    SpotifyLocalAuth {
+        message: String,
+    },
 }
 
 pub(crate) struct BrowserState {
@@ -299,6 +303,7 @@ pub(crate) enum PendingKind {
     PlaylistCreated { tracks: Vec<Track> },
     Expansion { action: ExpandAction, label: String },
     Generic { label: String, quiet: bool },
+    SpotifyLocalAuth,
 }
 
 pub(crate) enum ExpandAction {
@@ -335,6 +340,8 @@ pub struct NiruampApp {
     pub(crate) playback: Playback,
     pub(crate) sources: Vec<SourceInfo>,
     pub(crate) capabilities: Capabilities,
+    /// A `spotify.local_authorize` flow is running in NPLAY.
+    pub(crate) spotify_local_authorizing: bool,
     pub(crate) revision: u64,
     pub(crate) received_at: Instant,
     pub(crate) pending: HashMap<u64, Pending>,
@@ -472,6 +479,7 @@ impl NiruampApp {
             playback: Playback::default(),
             sources: Vec::new(),
             capabilities: Capabilities::default(),
+            spotify_local_authorizing: false,
             revision: 0,
             received_at: Instant::now(),
             pending: HashMap::new(),
@@ -872,6 +880,49 @@ impl NiruampApp {
                 self.toast(text, params.get("error").is_some());
                 self.load_settings();
             }
+            "spotify.local_auth" => {
+                let phase = params
+                    .get("phase")
+                    .and_then(Value::as_str)
+                    .unwrap_or("done");
+                if phase == "browser" {
+                    self.toast("Complete the Spotify authorization in your browser", false);
+                    return;
+                }
+                self.spotify_local_authorizing = false;
+                if params.get("authorized").and_then(Value::as_bool) == Some(true) {
+                    self.capabilities.spotify_local_authorized = true;
+                    if matches!(self.modal, Some(Modal::SpotifyLocalAuth { .. })) {
+                        self.modal = None;
+                    }
+                    self.toast("Local Spotify playback authorized", false);
+                } else {
+                    self.toast(
+                        format!(
+                            "Local Spotify authorization failed: {}",
+                            params
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown error")
+                        ),
+                        true,
+                    );
+                }
+                self.settings.loading = false;
+                self.load_settings();
+            }
+            "service.error" => {
+                let err: ServiceError = serde_json::from_value(params).unwrap_or_default();
+                if let Some(prompt) = local_auth_prompt(&self.capabilities, &err) {
+                    self.capabilities.spotify_local_authorized = false;
+                    // Keep the remedy one click away; never replace a modal
+                    // the user is typing into.
+                    if self.modal.is_none() {
+                        self.modal = Some(prompt);
+                    }
+                }
+                self.toast(err.text(), true);
+            }
             "spotify.auth" => {
                 if params.get("connected").and_then(Value::as_bool) == Some(true) {
                     self.toast("Spotify connected", false);
@@ -1058,6 +1109,16 @@ impl NiruampApp {
                     self.toast(label, false);
                 }
             }
+            (PendingKind::SpotifyLocalAuth, Ok(value)) => {
+                if value.get("started").and_then(Value::as_bool) == Some(true) {
+                    self.toast(
+                        "Local Spotify authorization started · NPLAY opens your browser",
+                        false,
+                    );
+                } else {
+                    self.toast("Local Spotify authorization is already running", false);
+                }
+            }
             (kind, Err(err)) => {
                 let label = match &kind {
                     PendingKind::Search { .. } => {
@@ -1110,12 +1171,30 @@ impl NiruampApp {
                     PendingKind::PlaylistCreated { .. } => "Playlist creation failed".to_string(),
                     PendingKind::Expansion { label, .. } => format!("{label} unavailable"),
                     PendingKind::Generic { label, .. } => label.clone(),
+                    PendingKind::SpotifyLocalAuth => {
+                        self.spotify_local_authorizing = false;
+                        "Local Spotify authorization unavailable".to_string()
+                    }
                 };
                 if !label.is_empty() {
                     self.toast(format!("{label}: {err}"), true);
                 }
             }
         }
+    }
+
+    /// Start NPLAY's local librespot OAuth flow (NPLAY 1.8.1+). The browser
+    /// is opened by NPLAY; the result arrives as `spotify.local_auth`.
+    pub(crate) fn authorize_spotify_local(&mut self) {
+        if !self.capabilities.spotify_local_authorize || self.spotify_local_authorizing {
+            return;
+        }
+        self.spotify_local_authorizing = true;
+        self.request(
+            "spotify.local_authorize",
+            json!({}),
+            Some(PendingKind::SpotifyLocalAuth),
+        );
     }
 
     pub(crate) fn load_settings(&mut self) {
@@ -2748,6 +2827,19 @@ impl NiruampApp {
                                     close = ui.button("CANCEL").clicked();
                                 });
                             }
+                            Modal::SpotifyLocalAuth { message } => {
+                                ui.label(RichText::new("AUTHORIZE LOCAL SPOTIFY PLAYBACK").strong().color(p.foreground));
+                                ui.add_space(4.0);
+                                ui.label(RichText::new(message.as_str()).color(p.warning));
+                                ui.label(RichText::new("NPLAY opens Spotify's sign-in page in your browser once; librespot then keeps the credentials for later starts.").small().color(p.muted));
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    submit = ui
+                                        .add_enabled(!self.spotify_local_authorizing, egui::Button::new("AUTHORIZE LOCAL PLAYBACK"))
+                                        .clicked();
+                                    close = ui.button("CLOSE").clicked();
+                                });
+                            }
                             Modal::AddRadio { name, url } => {
                                 ui.label(RichText::new("ADD CUSTOM RADIO").strong().color(p.foreground));
                                 ui.add_space(6.0);
@@ -2829,6 +2921,10 @@ impl NiruampApp {
                         }),
                     );
                     self.load_settings();
+                }
+                Modal::SpotifyLocalAuth { .. } => {
+                    self.authorize_spotify_local();
+                    self.modal = None;
                 }
                 Modal::AddRadio { name, url } => {
                     self.request(
@@ -3106,6 +3202,20 @@ pub(crate) fn save_tab(prefs: &mut Preferences, tab: Tab) {
     prefs.active_tab = tab.key().to_string();
 }
 
+/// The authorize prompt for a `service.error`, when NPLAY reports that local
+/// Spotify playback is not authorized and can run the authorization itself.
+pub(crate) fn local_auth_prompt(caps: &Capabilities, err: &ServiceError) -> Option<Modal> {
+    if !(err.is_spotify_local_unauthorized() && caps.spotify_local_authorize) {
+        return None;
+    }
+    let message = if err.message.is_empty() {
+        "Local Spotify playback is not authorized yet.".to_string()
+    } else {
+        err.message.clone()
+    };
+    Some(Modal::SpotifyLocalAuth { message })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3141,6 +3251,31 @@ mod tests {
         let decoded = decode_artwork(&encoded).unwrap();
         assert!(decoded.size[0] <= 256 && decoded.size[1] <= 256);
         assert_eq!(decoded.size, [256, 192]);
+    }
+
+    #[test]
+    fn not_authorized_error_offers_the_authorize_modal() {
+        let err: ServiceError = serde_json::from_value(json!({
+            "title": "Spotify playback unavailable",
+            "message": "Local Spotify playback is not authorized yet · choose Spotify → Local playback → AUTHORIZE",
+            "code": "spotify_local_unauthorized"
+        }))
+        .unwrap();
+        let caps = Capabilities {
+            spotify_local_authorize: true,
+            ..Default::default()
+        };
+        match local_auth_prompt(&caps, &err) {
+            Some(Modal::SpotifyLocalAuth { message }) => {
+                assert!(message.starts_with("Local Spotify playback is not authorized yet"))
+            }
+            _ => panic!("expected the authorize modal"),
+        }
+        // Without the command (NPLAY <= 1.8.0) there is nothing to offer.
+        assert!(local_auth_prompt(&Capabilities::default(), &err).is_none());
+        let other: ServiceError =
+            serde_json::from_value(json!({"title": "Spotify control unavailable"})).unwrap();
+        assert!(local_auth_prompt(&caps, &other).is_none());
     }
 
     /// A fake NPLAY speaking protocol 1 over a real Unix socket. `mode`:

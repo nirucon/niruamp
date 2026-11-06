@@ -394,6 +394,58 @@ impl NiruampApp {
         });
     }
 
+    /// Local playback (librespot) authorization. Shown only when NPLAY
+    /// advertises `spotify_local_authorize` (1.8.1+); older NPLAY keeps the
+    /// 0.5.1 layout.
+    fn settings_spotify_local(&mut self, ui: &mut Ui, scale: f32) {
+        if !self.capabilities.spotify_local_authorize {
+            return;
+        }
+        let p = self.palette();
+        let s = move |v: f32| v * scale;
+        let status = &self.settings.values.spotify;
+        let available = self.capabilities.spotify_local || status.local_available;
+        let authorized = self.capabilities.spotify_local_authorized;
+        let authorizing = self.spotify_local_authorizing || status.local_authorizing;
+        ui.horizontal(|ui| {
+            ui.add_space(s(22.0));
+            ui.label(
+                RichText::new("Local playback")
+                    .size(s(10.0))
+                    .color(p.foreground),
+            );
+            if !available {
+                ui.label(
+                    RichText::new("install librespot")
+                        .size(s(8.0))
+                        .color(p.warning),
+                );
+                return;
+            }
+            let (text, color) = if authorizing {
+                ("authorizing · complete it in your browser", p.warning)
+            } else if authorized {
+                ("authorized", p.success)
+            } else {
+                ("not authorized", p.warning)
+            };
+            ui.label(RichText::new(text).size(s(9.0)).color(color));
+            let label = if authorized {
+                "REAUTHORIZE LOCAL"
+            } else {
+                "AUTHORIZE LOCAL"
+            };
+            let button = ui
+                .add_enabled(!authorizing, egui::Button::new(label).small())
+                .on_hover_text(
+                    "NPLAY opens Spotify's sign-in page for its local librespot receiver. Needed once; librespot keeps the credentials.",
+                );
+            if button.clicked() {
+                self.authorize_spotify_local();
+            }
+        });
+    }
+
     fn settings_sources(&mut self, ui: &mut Ui, ctx: &Context) {
         let p = self.palette();
         let scale = self.prefs.scale;
@@ -468,6 +520,9 @@ impl NiruampApp {
                         );
                     }
                 });
+                if id == "spotify" && enabled {
+                    self.settings_spotify_local(ui, scale);
+                }
             }
             ui.horizontal(|ui| {
                 ui.label(
