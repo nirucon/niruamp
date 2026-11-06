@@ -23,7 +23,10 @@ scheduler deadlines, spectrum easing settling, pushed `vis` frame parsing
 (1.8 stream, 1.7 poll, stream advertised but rejected) with quiet/coalesced
 wakes, X11 visibility transitions (and a real unmap when `DISPLAY` points at an
 X server, e.g. Xvfb), the blocking single-instance listener, preference
-defaults and the artwork LRU bounds.
+defaults and the artwork LRU bounds, plus (0.5.2) the NPLAY 1.8.1 Spotify
+local-authorization capabilities and `service.error` parsing, and the
+not-authorized error → AUTHORIZE dialog decision (hidden without the
+capability).
 
 Energy: run with `NIRUAMP_DEBUG_FPS=1` to print frames/s and NPLAY messages/s
 every 5 s; `scripts/measure.py` samples CPU and RSS.
@@ -59,6 +62,18 @@ python3 -m unittest tests.test_service.ServiceTests.test_local_playback_through_
 `tools/fake-cava` is a synthetic bar-output harness used **only** to measure the
 cost of the visualization drawing/polling path. It is not audio capture and its
 output must not be presented as real CAVA visualization.
+
+### Local Spotify authorization (0.5.2 + NPLAY 1.8.1)
+
+NPLAY ships `tools/fake-librespot` (records its argv, prints a consent URL with
+`--enable-oauth` and then caches a fake `credentials.json`). With it on a
+private PATH, a recording `$BROWSER` and temporary HOME/XDG directories, the
+Settings → Sources → Spotify → Local playback row can be exercised under Xvfb
+without a Spotify account: "not authorized" → AUTHORIZE LOCAL → "authorizing ·
+complete it in your browser" → toasts → "authorized" / REAUTHORIZE LOCAL; the
+fake receiver was started with `--enable-oauth`, the URL reached `$BROWSER`,
+and the receiver stopped with the service's idle exit after NIRUAMP closed.
+The NPLAY suite (`tests/test_librespot_lifecycle.py`) covers the backend side.
 
 ## Manual desktop checks
 

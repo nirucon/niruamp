@@ -160,6 +160,7 @@ service.
 | `navidrome.setup` / `navidrome.clear` | `url`,`user`,`password` / `{}` | Credentials go straight to NPLAY's 0600 secrets file |
 | `spotify.connect` / `spotify.disconnect` | `{}` | Connect opens the normal OAuth browser flow in the background |
 | `spotify.devices` / `spotify.transfer` | `{}` / `device_id`, `play` | |
+| `spotify.local_authorize` | `{}` | 1.2 (NPLAY 1.8.1): run NPLAY's local librespot AUTHORIZE flow; NPLAY opens the browser; result in `spotify.local_auth` |
 | `library.scan` | optional `force` | Asynchronous; emits `library.scanned` |
 | `library.stats` | `{}` | Counts, roots, schema |
 | `service.info` | `{}` | Backend version, pid, uptime |
@@ -200,6 +201,15 @@ capability changes:
 `revision` is monotonic. A client that missed events must reconnect or call
 `state.snapshot`; it must not infer queue or playback state from event ordering
 alone. `library.scanned` and `spotify.auth` carry operation results.
+
+Protocol 1.2 (NPLAY 1.8.1) adds `spotify.local_auth` (`phase` `browser`, then
+`done` with `authorized` and optional `error`) and `service.error`
+(`title`, `message`, optional `code`). NIRUAMP 0.5.2 shows every
+`service.error` as an error toast; with `code: "spotify_local_unauthorized"`
+it also opens a dialog with **AUTHORIZE LOCAL PLAYBACK**. Capabilities
+`spotify_local_authorize`, `spotify_local` and `spotify_local_authorized`
+drive the Settings → Sources → Spotify → Local playback row, which is hidden
+when `spotify_local_authorize` is absent (NPLAY ≤ 1.8.0).
 
 ## Errors
 

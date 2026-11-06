@@ -1,3 +1,20 @@
+# NIRUAMP 0.5.2
+
+Local Spotify playback authorization (needs NPLAY 1.8.1, protocol 1.2).
+
+- Settings → Sources → Spotify shows a **Local playback** row: authorized /
+  not authorized / authorizing, with **AUTHORIZE LOCAL** or **REAUTHORIZE
+  LOCAL**. It calls `spotify.local_authorize`; NPLAY opens Spotify's sign-in
+  page in the browser and reports the result (`spotify.local_auth`) as a
+  toast. "install librespot" is shown when NPLAY has no librespot.
+- A Spotify play that fails because local playback is not authorized
+  (`service.error`, `code: spotify_local_unauthorized`) shows NPLAY's message
+  in a dialog with **AUTHORIZE LOCAL PLAYBACK**, instead of failing silently.
+  Other asynchronous NPLAY errors (`service.error`) appear as error toasts.
+- With NPLAY ≤ 1.8.0 nothing changes: the capability is missing, the row and
+  dialog are hidden. X11/Wayland behavior and the NIRUX theme coupling are
+  unchanged.
+
 # NIRUAMP 0.5.1
 
 - X11: WM_CLASS is `"niruamp", "niruamp"` again, as in 0.4. With the Wayland

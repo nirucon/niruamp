@@ -20,11 +20,12 @@ standalone terminal player and continues to work without NIRUX or NIRUAMP.
 
 ## Status
 
-**0.5.1 — runnable, installable and integrated, on NIRUX (X11) and on Wayland
+**0.5.2 — runnable, installable and integrated, on NIRUX (X11) and on Wayland
 (Omarchy/Hyprland).** NIRUAMP is a Rust graphical
 client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.3 or
-newer is required** (1.8.0+ for the visualization stream) and remains fully
-usable standalone.
+newer is required** (1.8.0+ for the visualization stream, 1.8.1+ for
+authorizing local Spotify playback from Settings) and remains fully usable
+standalone.
 
 The repository includes the frontend, the NPLAY headless service changes and
 tests, protocol/architecture/testing documentation, an installer, desktop entry
@@ -78,6 +79,9 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
   **NPLAY 1.8.0+** is recommended: NIRUAMP then uses its visualization stream
   (`visualization.subscribe`) instead of polling, which costs NPLAY about a
   third of the CPU. With 1.7.x the 1.0 polling path is used as a fallback.
+  **NPLAY 1.8.1+** adds Settings → Sources → Spotify → AUTHORIZE LOCAL
+  (librespot sign-in) and reports a Spotify play that fails for lack of it;
+  with older NPLAY that control is hidden.
 - Rust 1.85+ to build (the declared `rust-version`; Debian 13 ships 1.85).
 - Optional: `cava` (visualization), `yt-dlp` (YouTube), `librespot` (Spotify
   local playback), Navidrome credentials, Spotify Premium for Connect playback.
@@ -107,7 +111,7 @@ The prebuilt archive is built by the release workflow on Ubuntu 22.04
 `libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
 
 ```sh
-tar -xzf niruamp-0.5.1-x86_64-linux-gnu.tar.gz
+tar -xzf niruamp-0.5.2-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 
