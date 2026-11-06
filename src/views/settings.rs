@@ -101,16 +101,24 @@ impl NiruampApp {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Theme").size(s(11.0)).color(p.foreground));
                 let mut selected = self.prefs.theme.clone();
+                // Inside NIRU (and wherever no Omarchy theme exists) the
+                // labels are the 0.4 ones.
+                let omarchy = crate::omarchy::current().is_some() && !crate::session::niru();
+                let auto_label = if omarchy {
+                    "Auto · follow Omarchy"
+                } else {
+                    "Auto · follow NIRUX"
+                };
                 egui::ComboBox::from_id_salt("theme-select")
-                    .selected_text(if selected == "auto" {
-                        "Auto · follow NIRUX".to_string()
-                    } else if selected == "classic" {
-                        "NIRUAMP Classic".to_string()
-                    } else {
-                        self.theme.label.clone()
+                    .selected_text(match selected.as_str() {
+                        "auto" => auto_label.to_string(),
+                        "classic" => "NIRUAMP Classic".to_string(),
+                        "nirux" => "NIRUX · current theme".to_string(),
+                        "omarchy" => "Omarchy · current theme".to_string(),
+                        _ => self.theme.label.clone(),
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut selected, "auto".into(), "Auto · follow NIRUX")
+                        ui.selectable_value(&mut selected, "auto".into(), auto_label)
                             .clicked();
                         ui.selectable_value(
                             &mut selected,
@@ -118,6 +126,20 @@ impl NiruampApp {
                             "NIRUAMP Classic · standalone",
                         )
                         .clicked();
+                        if omarchy || self.prefs.theme == "omarchy" {
+                            ui.selectable_value(
+                                &mut selected,
+                                "omarchy".into(),
+                                "Omarchy · current theme",
+                            )
+                            .clicked();
+                            ui.selectable_value(
+                                &mut selected,
+                                "nirux".into(),
+                                "NIRUX · current theme",
+                            )
+                            .clicked();
+                        }
                         for (key, label) in theme::available_themes() {
                             if ui
                                 .selectable_value(&mut selected, key.clone(), label)
@@ -156,10 +178,23 @@ impl NiruampApp {
             });
             ui.horizontal(|ui| {
                 let mut top = self.prefs.always_on_top;
-                if ui
-                    .checkbox(&mut top, RichText::new("Always on top").size(s(11.0)))
-                    .changed()
-                {
+                // Wayland leaves stacking to the compositor; NIRUAMP can ask
+                // Hyprland (pin), not other compositors.
+                let stacking = self.hypr.is_some()
+                    || crate::session::backend() == crate::session::Backend::X11;
+                let resp = ui.add_enabled(
+                    stacking,
+                    egui::Checkbox::new(&mut top, RichText::new("Always on top").size(s(11.0))),
+                );
+                let resp = if stacking {
+                    resp
+                } else {
+                    resp.on_disabled_hover_text(
+                        "This Wayland compositor decides stacking itself. Use a compositor \
+                         rule, or NIRUAMP_BACKEND=x11 to run through XWayland.",
+                    )
+                };
+                if resp.changed() {
                     self.toggle_pin(ctx);
                 }
                 let mut visual = self.prefs.show_visualization;

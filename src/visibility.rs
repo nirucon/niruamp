@@ -105,6 +105,63 @@ impl Visibility {
         Some(Self { state })
     }
 
+    /// Watch NIRUAMP's window through Hyprland's event socket. The thread
+    /// sleeps in a blocking read; a burst of events (a workspace switch emits
+    /// several) is coalesced into one look at the compositor state.
+    pub fn spawn_hyprland(hypr: crate::hyprland::Hyprland, ctx: egui::Context) -> Option<Self> {
+        use crate::hyprland::{affects_visibility, client_visible};
+        use std::io::{BufRead, BufReader};
+        let stream = std::os::unix::net::UnixStream::connect(hypr.event_socket()).ok()?;
+        let state = Arc::new(AtomicU8::new(0));
+        let shared = state.clone();
+        let evaluate = move |shared: &AtomicU8| {
+            let visible = match (hypr.own_client(), hypr.monitors(), hypr.workspaces()) {
+                (Some(client), Some(monitors), Some(workspaces)) => {
+                    client_visible(&client, &monitors, &workspaces)
+                }
+                // Not mapped yet, or the compositor did not answer: draw.
+                _ => true,
+            };
+            let new = if visible { 0 } else { UNMAPPED };
+            if shared.swap(new, Ordering::AcqRel) != new {
+                ctx.request_repaint();
+            }
+        };
+        thread::Builder::new()
+            .name("niruamp-visibility".into())
+            .spawn(move || {
+                evaluate(&shared);
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    let _ = reader.get_ref().set_read_timeout(None);
+                    match reader.read_line(&mut line) {
+                        Ok(0) | Err(_) => return,
+                        Ok(_) => {}
+                    }
+                    if !affects_visibility(line.trim_end()) {
+                        continue;
+                    }
+                    // Drain the rest of the burst, then look once.
+                    let _ = reader
+                        .get_ref()
+                        .set_read_timeout(Some(std::time::Duration::from_millis(40)));
+                    loop {
+                        line.clear();
+                        match reader.read_line(&mut line) {
+                            Ok(0) => return,
+                            Ok(_) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                    evaluate(&shared);
+                }
+            })
+            .ok()?;
+        Some(Self { state })
+    }
+
     pub fn visible(&self) -> bool {
         is_visible(self.state.load(Ordering::Acquire))
     }

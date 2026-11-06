@@ -69,8 +69,10 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 
 ## Requirements
 
-- Linux with X11 or XWayland. The UI uses `eframe`/`egui` with the Glow renderer.
-  Verified live on Debian 13.7 (trixie), x86_64, with NIRUX and NPLAY 1.7.0.
+- Linux with X11 or Wayland. The UI uses `eframe`/`egui` with the Glow renderer.
+  In the NIRU session (NIRUWM) it runs on X11 exactly as before; on a Wayland
+  desktop (Omarchy/Hyprland and others) it runs natively on Wayland. Verified
+  live on Debian 13.7 (trixie) with NIRUX, and on Omarchy 4 (Hyprland 0.57.1).
 - **NPLAY 1.7.3+** with its normal runtime prerequisites (`mpv`, Python 3).
   **NPLAY 1.8.0+** is recommended: NIRUAMP then uses its visualization stream
   (`visualization.subscribe`) instead of polling, which costs NPLAY about a
@@ -114,6 +116,57 @@ install -m755 niruamp ~/.local/bin/niruamp
 ```
 
 NPLAY is never modified by the uninstaller.
+
+## Omarchy / Wayland
+
+NIRUAMP 0.5 runs natively on Wayland and follows the Omarchy theme. Install on
+Omarchy (Arch) like anywhere else; NPLAY comes first:
+
+```sh
+git clone https://github.com/nirucon/nplay.git && (cd nplay && ./install.sh)
+git clone https://github.com/nirucon/niruamp.git && (cd niruamp && ./install.sh)
+niruamp
+```
+
+Omarchy already ships the runtime libraries (`wayland`, `libxkbcommon`, Mesa)
+and `cava`. On other Arch systems: `sudo pacman -S wayland libxkbcommon
+libxkbcommon-x11 mesa`.
+
+What NIRUAMP does on Wayland:
+
+- **Backend.** Native Wayland whenever `WAYLAND_DISPLAY` is set outside the NIRU
+  session, so scaling (including fractional scales such as 1.25) stays crisp.
+  `NIRUAMP_BACKEND=x11` forces XWayland, `NIRUAMP_BACKEND=wayland` forces
+  Wayland. The NIRU session always uses X11, as before.
+- **Theme.** With **Theme → Auto** NIRUAMP follows the current Omarchy theme and
+  switches live with `omarchy-theme-set`. It reads the theme's `colors.toml`
+  (Omarchy 3.4+; `~/.local/state/omarchy/current/theme` in Omarchy 4,
+  `~/.config/omarchy/current/theme` in 3.x), or `alacritty.toml` for older
+  themes. `background`/`foreground` are used as given, `accent` drives focus,
+  the LED and the spectrum, `selection` the borders, and the dimmed foreground
+  the secondary text (lifted to at least 4:1 contrast when a theme makes it too
+  faint). Light themes work like NIRUX's light themes. **Omarchy · current
+  theme** and **NIRUX · current theme** pin one source.
+- **Hyprland.** Wayland lets only the compositor place and stack windows, so
+  NIRUAMP talks to Hyprland over its IPC socket. Before the window opens it
+  registers an in-memory window rule (gone after a Hyprland reload, registered
+  again at the next start) so NIRUAMP opens floating at its saved size and
+  position, without flashing tiled first. **Always on top** pins the window
+  (Hyprland's pin: above other windows on every workspace). Minimize to tray
+  parks it on the special workspace `special:niruamp`; the tray, or starting
+  `niruamp` again, brings it back. The spectrum pauses when the window is on a
+  workspace that is not shown, exactly as under NIRUWM. Hyprland 0.55+ (Lua
+  config) is used fully; older Hyprland gets the classic dispatchers after the
+  window has mapped.
+- **Other Wayland compositors** decide position and stacking themselves; the
+  **Always on top** setting is disabled there, and the spectrum keeps running
+  while the window is hidden (the compositor still stops drawing it).
+- **Tray.** The tray icon is a StatusNotifierItem; Omarchy's shell, Waybar and
+  other SNI hosts show it.
+- **Responsiveness.** Off a real X server NIRUAMP does not wait for vsync: a
+  compositor sends no frame callbacks to a hidden window, and a swap that
+  waited for one would stop the app from answering the compositor's pings
+  (Hyprland's "Application not responding"). NIRUAMP paces its own frames.
 
 ## Run and connect
 
@@ -193,7 +246,10 @@ keyboard navigation and windowshade behavior coherent. It is not a pixel-for-pix
 
 ## Appearance
 
-By default NIRUAMP follows the active NIRUX theme:
+By default (**Theme → Auto**) NIRUAMP follows the desktop: in the NIRU session
+always NIRUX, elsewhere the current Omarchy theme when there is one (see
+[Omarchy / Wayland](#omarchy--wayland)), otherwise NIRUX's configuration if it
+exists. The NIRUX rules are:
 
 1. `$XDG_CONFIG_HOME/niruwm/config.toml` selects the theme.
 2. A custom `$XDG_CONFIG_HOME/niruwm/themes/NAME.toml` wins, exactly like NIRUX.
@@ -217,6 +273,8 @@ and appearance changes apply live after a debounce.
   bars. Live radio/YouTube visualization depends on what CAVA can capture.
 - Live radio cannot seek; Spotify EQ and some source-specific operations remain
   backend limitations, surfaced as disabled states.
+- On Wayland compositors other than Hyprland, NIRUAMP cannot restore its
+  window position or keep itself on top; the compositor decides.
 - Tray support is optional and best-effort. Without a D-Bus StatusNotifierItem
   host, minimize falls back to a normal minimized window. The tray icon follows
   the active NIRUX palette.

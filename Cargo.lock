@@ -1715,7 +1715,7 @@ dependencies = [
 
 [[package]]
 name = "niruamp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64",
  "eframe",
@@ -1727,6 +1727,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "winit",
  "x11rb",
 ]
 

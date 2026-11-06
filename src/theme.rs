@@ -1,4 +1,7 @@
-//! NIRUX appearance resolution with a standalone NIRUAMP fallback.
+//! NIRUX and Omarchy appearance resolution with a standalone NIRUAMP fallback.
+//!
+//! `auto` follows NIRUX inside the NIRU session, otherwise the current Omarchy
+//! theme when one exists (see `omarchy.rs`), otherwise NIRUX's configuration.
 //!
 //! The precedence intentionally follows NIRUX: a custom user theme file wins;
 //! otherwise a compiled-in builtin theme owns the base palette and the versioned
@@ -6,6 +9,7 @@
 //! is ignored, while a malformed custom theme is reported without replacing the
 //! working appearance.
 use crate::config::config_home;
+use crate::{omarchy, session};
 use egui::Color32;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -474,10 +478,66 @@ fn read_theme(name: &str) -> Result<(Palette, String, String, bool), String> {
     Ok((palette, name.to_string(), b.label.to_string(), false))
 }
 
+/// Where `auto` takes its colours from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AutoSource {
+    Nirux,
+    Omarchy(omarchy::Current),
+}
+
+/// `auto` precedence: the NIRU session always follows NIRUX exactly as
+/// before; outside it the current Omarchy theme wins when there is one; then
+/// a NIRUX configuration; then Classic (via the NIRUX path, unchanged).
+fn auto_source() -> AutoSource {
+    if session::niru() {
+        return AutoSource::Nirux;
+    }
+    match omarchy::current() {
+        Some(current) => AutoSource::Omarchy(current),
+        None => AutoSource::Nirux,
+    }
+}
+
+fn read_omarchy(current: &omarchy::Current) -> Result<(Palette, String, String, bool), String> {
+    let c = omarchy::read_colors(&current.dir)
+        .map_err(|e| format!("Omarchy theme {}: {e}", current.name))?;
+    Ok((
+        build_palette(c.background, c.foreground, c.muted, c.border, c.focus),
+        current.name.clone(),
+        omarchy::label(&current.name),
+        false,
+    ))
+}
+
+fn nirux_or_classic() -> Result<(Palette, String, String, bool), String> {
+    match theme_name_from_config()? {
+        Some(name) => {
+            read_theme(&name).map_err(|e| format!("{e}; keeping the previous appearance"))
+        }
+        None => Ok((
+            classic_palette(),
+            "classic".to_string(),
+            "NIRUAMP Classic".to_string(),
+            false,
+        )),
+    }
+}
+
 pub fn resolve(prefs: &Preferences) -> Result<ResolvedTheme, String> {
     let mode = prefs.theme.trim();
     let appearance = read_appearance();
     let mut warnings = appearance.warnings.clone();
+    // `nirux` is `auto` pinned to NIRUX; `omarchy` is `auto` pinned to Omarchy.
+    let source = match mode {
+        "auto" => Some(auto_source()),
+        "nirux" => Some(AutoSource::Nirux),
+        "omarchy" => Some(AutoSource::Omarchy(omarchy::current().ok_or_else(
+            || "no current Omarchy theme found; keeping the previous appearance".to_string(),
+        )?)),
+        _ => None,
+    };
+    let from_omarchy = matches!(source, Some(AutoSource::Omarchy(_)));
+    let follows_nirux = source == Some(AutoSource::Nirux);
     let (mut palette, name, label, custom) = if mode == "classic" {
         (
             classic_palette(),
@@ -485,24 +545,16 @@ pub fn resolve(prefs: &Preferences) -> Result<ResolvedTheme, String> {
             "NIRUAMP Classic".to_string(),
             false,
         )
-    } else if mode != "auto" {
-        read_theme(mode).map_err(|e| format!("{e}; keeping the previous appearance"))?
+    } else if let Some(AutoSource::Omarchy(current)) = &source {
+        read_omarchy(current).map_err(|e| format!("{e}; keeping the previous appearance"))?
+    } else if follows_nirux {
+        nirux_or_classic()?
     } else {
-        match theme_name_from_config()? {
-            Some(name) => {
-                read_theme(&name).map_err(|e| format!("{e}; keeping the previous appearance"))?
-            }
-            None => (
-                classic_palette(),
-                "classic".to_string(),
-                "NIRUAMP Classic".to_string(),
-                false,
-            ),
-        }
+        read_theme(mode).map_err(|e| format!("{e}; keeping the previous appearance"))?
     };
     // NIRUX lets a user theme file take precedence over appearance colour
     // overrides. Extended semantic roles are honoured when no custom file wins.
-    if mode == "auto" && !custom {
+    if follows_nirux && !custom {
         for (key, color) in &appearance.colors {
             match key.as_str() {
                 "background" => palette.background = *color,
@@ -554,7 +606,9 @@ pub fn resolve(prefs: &Preferences) -> Result<ResolvedTheme, String> {
         focus_width: appearance.focus_width.unwrap_or(2.0),
         reduced_motion: appearance.reduced_motion.unwrap_or(false),
     };
-    let source = if mode == "classic" || (mode == "auto" && name == "classic") {
+    let source = if from_omarchy {
+        format!("Omarchy · {name}")
+    } else if mode == "classic" || (follows_nirux && name == "classic") {
         "NIRUAMP fallback".to_string()
     } else if custom {
         format!("NIRUX custom · {}", custom_theme_path(&name).display())
@@ -872,6 +926,9 @@ impl Inotify {
 /// config directory and its themes directory, or the nearest parent that
 /// exists so their creation is noticed too.
 fn watch_dirs(inotify: &Inotify) {
+    for dir in omarchy::watch_dirs() {
+        inotify.watch(&dir);
+    }
     let niruwm = niruwm_dir();
     if niruwm.is_dir() {
         inotify.watch(&niruwm);
@@ -964,8 +1021,15 @@ fn fingerprint(prefs: &Preferences) -> Fingerprint {
     } else {
         meta(&custom_theme_path(&resolved_name))
     };
+    // Outside the NIRU session `auto` can follow Omarchy; there its current
+    // theme directory (replaced on every switch) and colour file count too.
+    let omarchy = if mode == "omarchy" || (mode == "auto" && !session::niru()) {
+        omarchy::fingerprint()
+    } else {
+        String::new()
+    };
     Fingerprint {
-        mode: format!("{mode}|{resolved_name}|{theme_file:?}"),
+        mode: format!("{mode}|{resolved_name}|{theme_file:?}|{omarchy}"),
         config: meta(&niruwm_dir().join("config.toml")),
         appearance: meta(&niruwm_dir().join("appearance.toml")),
         themes_dir: fs::metadata(niruwm_dir().join("themes"))
@@ -1017,11 +1081,10 @@ fn watch_loop(
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::Mutex;
 
     fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+        crate::session::env_lock()
     }
 
     struct TempEnv {
@@ -1041,16 +1104,43 @@ mod tests {
             ));
             let _ = fs::remove_dir_all(&root);
             fs::create_dir_all(root.join("niruwm/themes")).unwrap();
-            let old = vec![
-                ("XDG_CONFIG_HOME", std::env::var_os("XDG_CONFIG_HOME")),
-                ("HOME", std::env::var_os("HOME")),
-            ];
+            let old = [
+                "XDG_CONFIG_HOME",
+                "HOME",
+                "XDG_CURRENT_DESKTOP",
+                "DESKTOP_SESSION",
+                "DISPLAY",
+                "WAYLAND_DISPLAY",
+            ]
+            .into_iter()
+            .map(|k| (k, std::env::var_os(k)))
+            .collect();
             std::env::set_var("XDG_CONFIG_HOME", &root);
             std::env::set_var("HOME", &root);
+            for k in [
+                "XDG_CURRENT_DESKTOP",
+                "DESKTOP_SESSION",
+                "DISPLAY",
+                "WAYLAND_DISPLAY",
+            ] {
+                std::env::remove_var(k);
+            }
             Self { root, old }
         }
         fn dir(&self) -> PathBuf {
             self.root.join("niruwm")
+        }
+        /// An Omarchy 4 current theme (replaced the way omarchy-theme-set does).
+        fn omarchy(&self, name: &str, colors: &str) {
+            let current = self.root.join(".local/state/omarchy/current");
+            fs::create_dir_all(&current).unwrap();
+            let next = current.join("next-theme");
+            let _ = fs::remove_dir_all(&next);
+            fs::create_dir_all(&next).unwrap();
+            fs::write(next.join("colors.toml"), colors).unwrap();
+            let _ = fs::remove_dir_all(current.join("theme"));
+            fs::rename(&next, current.join("theme")).unwrap();
+            fs::write(current.join("theme.name"), format!("{name}\n")).unwrap();
         }
         fn write(&self, relative: &str, text: &str) {
             let path = self.dir().join(relative);
@@ -1262,5 +1352,93 @@ mod tests {
         assert!(themes
             .iter()
             .any(|(k, label)| k == "my-theme" && label == "My Theme"));
+    }
+
+    const OMARCHY_TOKYO: &str = "accent = \"#7aa2f7\"\nselection = \"#292e42\"\nbackground = \"#1a1b26\"\nforeground = \"#a9b1d6\"\ndark_foreground = \"#565f89\"\n";
+    const OMARCHY_LATTE: &str = "mode = \"light\"\naccent = \"#1e66f5\"\nselection = \"#ccd0da\"\nbackground = \"#eff1f5\"\nforeground = \"#4c4f69\"\ndark_foreground = \"#8c8fa1\"\n";
+
+    #[test]
+    fn auto_follows_omarchy_outside_the_niru_session() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("omarchy-auto");
+        env.omarchy("tokyo-night", OMARCHY_TOKYO);
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.source, "Omarchy · tokyo-night");
+        assert_eq!(theme.label, "Tokyo Night");
+        assert_eq!(
+            theme.palette.background,
+            Color32::from_rgb(0x1a, 0x1b, 0x26)
+        );
+        assert_eq!(theme.palette.focus, Color32::from_rgb(0x7a, 0xa2, 0xf7));
+        assert!(!theme.palette.light);
+    }
+
+    #[test]
+    fn niru_session_keeps_nirux_even_with_omarchy_present() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("omarchy-niru");
+        env.omarchy("tokyo-night", OMARCHY_TOKYO);
+        env.write("config.toml", "theme = \"niru-nord\"\n");
+        std::env::set_var("XDG_CURRENT_DESKTOP", "NIRU");
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.name, "niru-nord");
+        assert_eq!(theme.source, "NIRUX · niru-nord");
+        // Without a NIRUX config the NIRU session still gets Classic, as before.
+        fs::remove_file(env.dir().join("config.toml")).unwrap();
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(theme.source, "NIRUAMP fallback");
+    }
+
+    #[test]
+    fn explicit_nirux_and_omarchy_modes() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("omarchy-explicit");
+        assert!(resolve(&pref("omarchy")).is_err(), "no Omarchy theme yet");
+        env.omarchy("catppuccin-latte", OMARCHY_LATTE);
+        env.write("config.toml", "theme = \"niru-satie\"\n");
+        let o = resolve(&pref("omarchy")).unwrap();
+        assert_eq!(o.label, "Catppuccin Latte");
+        assert!(o.palette.light);
+        assert!(luminance(o.palette.foreground) < 0.35);
+        let n = resolve(&pref("nirux")).unwrap();
+        assert_eq!(n.name, "niru-satie");
+    }
+
+    #[test]
+    fn nirux_appearance_overrides_do_not_touch_omarchy_colours() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("omarchy-appearance");
+        env.omarchy("tokyo-night", OMARCHY_TOKYO);
+        env.write(
+            "appearance.toml",
+            "schema = 1\n[colors]\nbackground = \"ff00ff\"\n",
+        );
+        let theme = resolve(&Preferences::default()).unwrap();
+        assert_eq!(
+            theme.palette.background,
+            Color32::from_rgb(0x1a, 0x1b, 0x26)
+        );
+    }
+
+    #[test]
+    fn watcher_follows_an_omarchy_theme_switch() {
+        let _guard = env_lock().lock().unwrap();
+        let env = TempEnv::new("omarchy-watch");
+        env.omarchy("tokyo-night", OMARCHY_TOKYO);
+        let prefs = Arc::new(Mutex::new(Preferences::default()));
+        let watcher = ThemeWatcher::spawn(prefs, egui::Context::default());
+        thread::sleep(Duration::from_millis(300));
+        env.omarchy("catppuccin-latte", OMARCHY_LATTE);
+        let deadline = Instant::now() + Duration::from_secs(6);
+        let mut updated = None;
+        while Instant::now() < deadline {
+            if let Ok(ThemeEvent::Updated(theme)) =
+                watcher.rx.recv_timeout(Duration::from_millis(250))
+            {
+                updated = Some(theme.source.clone());
+                break;
+            }
+        }
+        assert_eq!(updated.as_deref(), Some("Omarchy · catppuccin-latte"));
     }
 }

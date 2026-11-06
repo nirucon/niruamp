@@ -8,10 +8,13 @@
 )]
 mod app;
 mod config;
+mod hyprland;
 mod model;
+mod omarchy;
 mod platform;
 mod protocol;
 mod schedule;
+mod session;
 mod sound;
 mod theme;
 mod tray;
@@ -33,6 +36,9 @@ Environment:
   NPLAY_BIN             Alternative NPLAY executable
   NIRUAMP_SCREENSHOT    Save a release-build screenshot to this path
   NIRUAMP_DEBUG_FPS     Print frames/s and NPLAY messages/s every 5 s
+  NIRUAMP_BACKEND       x11 or wayland: override the windowing backend
+                        (default: X11 in the NIRU session, native Wayland
+                        wherever WAYLAND_DISPLAY is set otherwise)
 
 NPLAY 1.7.3 or newer is required (1.8.0+ for the visualization stream).
 It remains fully usable standalone.";
@@ -85,10 +91,44 @@ fn main() {
     if let (Some(x), Some(y)) = (window_state.x, window_state.y) {
         viewport = viewport.with_position(egui::pos2(x, y));
     }
+    let backend_kind = session::backend();
+    if backend_kind == session::Backend::Wayland {
+        // Wayland lets only the compositor place windows. On Hyprland a rule
+        // registered before the window exists opens it floating at the saved
+        // geometry; elsewhere the compositor decides.
+        if let Some(hypr) = hyprland::Hyprland::detect() {
+            if hypr.speaks_lua() {
+                let position = window_state.x.zip(window_state.y);
+                if let Err(e) =
+                    hypr.register_placement_rule((inner.x, inner.y), position, prefs.always_on_top)
+                {
+                    eprintln!("niruamp: Hyprland placement rule not registered: {e}");
+                }
+            }
+        }
+    }
     let options = eframe::NativeOptions {
+        event_loop_builder: Some(Box::new(move |builder| {
+            use winit::platform::wayland::EventLoopBuilderExtWayland;
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            match backend_kind {
+                session::Backend::X11 => {
+                    builder.with_x11();
+                }
+                session::Backend::Wayland => {
+                    builder.with_wayland();
+                }
+            }
+        })),
         viewport,
         renderer: eframe::Renderer::Glow,
-        vsync: true,
+        // A compositor stops frame callbacks for a window it does not show
+        // (another workspace). With vsync, Mesa's eglSwapBuffers then waits
+        // for the next callback inside the UI thread, which stops answering
+        // xdg_wm_base pings (Hyprland: "Application not responding"), and the
+        // same holds for XWayland. NIRUAMP paces its own frames, so vsync is
+        // only kept on a real X server (NIRUWM), where it never blocks.
+        vsync: session::vsync(backend_kind),
         multisampling: 0,
         depth_buffer: 0,
         stencil_buffer: 0,
@@ -111,7 +151,7 @@ fn main() {
     );
     if let Err(e) = result {
         eprintln!("niruamp: display/window initialization failed: {e}");
-        eprintln!("NIRUAMP needs a graphical X11 or XWayland session. NPLAY remains usable without it: run `nplay`.");
+        eprintln!("NIRUAMP needs a graphical X11 or Wayland session (NIRUAMP_BACKEND=x11 forces XWayland). NPLAY remains usable without it: run `nplay`.");
         std::process::exit(1);
     }
 }

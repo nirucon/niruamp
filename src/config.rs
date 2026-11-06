@@ -76,7 +76,9 @@ pub const VIS_FPS_CHOICES: [u32; 3] = [30, 20, 15];
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
-    /// `auto` follows NIRUX, `classic` is the standalone fallback, or a theme name.
+    /// `auto` follows the desktop (NIRUX in the NIRU session, else the current
+    /// Omarchy theme, else NIRUX), `nirux`/`omarchy` pin one source,
+    /// `classic` is the standalone fallback, or a NIRUX theme name.
     pub theme: String,
     pub scale: f32,
     pub always_on_top: bool,

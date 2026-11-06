@@ -181,7 +181,7 @@ impl NiruampApp {
             Sense::click_and_drag(),
         );
         if drag.drag_started() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            self.start_drag(ctx);
         }
         if drag.double_clicked() {
             self.toggle_shade(ctx);
@@ -840,7 +840,7 @@ impl NiruampApp {
             },
         );
         if drag.drag_started() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            self.start_drag(ctx);
         }
         if drag.double_clicked() {
             self.toggle_shade(ctx);
@@ -873,6 +873,11 @@ impl NiruampApp {
 
     pub(crate) fn toggle_pin(&mut self, ctx: &Context) {
         self.prefs.always_on_top = !self.prefs.always_on_top;
+        if let Some(h) = self.hypr.as_ref() {
+            if let Some(c) = h.own_client() {
+                h.set_pinned(&c, self.prefs.always_on_top, self.hypr_lua);
+            }
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             if self.prefs.always_on_top {
                 egui::WindowLevel::AlwaysOnTop

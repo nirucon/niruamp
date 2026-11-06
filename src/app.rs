@@ -387,6 +387,13 @@ pub struct NiruampApp {
     /// frame, or without X11).
     pub(crate) visibility: Option<crate::visibility::Visibility>,
     pub(crate) visibility_probed: bool,
+    /// Hyprland, when NIRUAMP runs natively under it (never in NIRU).
+    pub(crate) hypr: Option<crate::hyprland::Hyprland>,
+    /// That Hyprland speaks Lua (0.55+).
+    pub(crate) hypr_lua: bool,
+    /// The compositor may have moved the window since its position was read.
+    pub(crate) hypr_geometry_dirty: bool,
+    pub(crate) hypr_geometry_read: Instant,
 }
 
 impl NiruampApp {
@@ -399,7 +406,14 @@ impl NiruampApp {
     ) -> Self {
         let ctx = cc.egui_ctx.clone();
         let theme = theme::resolve(&prefs).unwrap_or_else(|e| {
-            let mut t = theme::resolve(&Preferences::default()).expect("classic theme");
+            let mut t = theme::resolve(&Preferences::default())
+                .or_else(|_| {
+                    theme::resolve(&Preferences {
+                        theme: "classic".into(),
+                        ..Preferences::default()
+                    })
+                })
+                .expect("classic theme");
             t.warnings.push(e);
             t
         });
@@ -511,7 +525,17 @@ impl NiruampApp {
             immersive: false,
             visibility: None,
             visibility_probed: false,
+            hypr: None,
+            hypr_lua: false,
+            hypr_geometry_dirty: false,
+            hypr_geometry_read: Instant::now(),
         };
+        if crate::session::backend() == crate::session::Backend::Wayland {
+            if let Some(h) = crate::hyprland::Hyprland::detect() {
+                app.hypr_lua = h.speaks_lua();
+                app.hypr = Some(h);
+            }
+        }
         if let Some(b) = &app.backend {
             let c = ctx.clone();
             b.client.set_wake(backend_wake(c));
@@ -750,6 +774,10 @@ impl NiruampApp {
         }
         while let Ok(()) = self.instance_rx.try_recv() {
             self.activation_requests += 1;
+            if self.hypr.is_some() {
+                // Brings it back from the tray workspace and focuses it.
+                self.show_from_tray(ctx);
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -1152,6 +1180,22 @@ impl NiruampApp {
     }
 
     pub(crate) fn hide_to_tray(&mut self, ctx: &Context) {
+        if let Some(h) = self.hypr.clone() {
+            // Wayland cannot unmap a window and Hyprland has no minimize:
+            // park it on NIRUAMP's special workspace instead.
+            if let Some(c) = h.own_client() {
+                if c.floating {
+                    self.window_state.x = Some(c.at[0]);
+                    self.window_state.y = Some(c.at[1]);
+                }
+                if self.tray.is_some() && self.prefs.tray_enabled {
+                    self.hidden_to_tray = true;
+                    self.stop_visualization();
+                }
+                h.hide(&c, self.hypr_lua);
+                return;
+            }
+        }
         if self.tray.is_some() && self.prefs.tray_enabled {
             self.hidden_to_tray = true;
             self.stop_visualization();
@@ -1163,6 +1207,13 @@ impl NiruampApp {
 
     pub(crate) fn show_from_tray(&mut self, ctx: &Context) {
         self.hidden_to_tray = false;
+        if let Some(h) = self.hypr.as_ref() {
+            if let Some(c) = h.own_client() {
+                h.show(&c, self.prefs.always_on_top, self.hypr_lua);
+                ctx.request_repaint();
+                return;
+            }
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -1340,6 +1391,57 @@ impl NiruampApp {
         }
     }
 
+    /// After the first frame on Hyprland: a window that mapped tiled anyway
+    /// (Hyprland without Lua rules, or a user rule that won) is floated into
+    /// its saved geometry once, off the UI thread.
+    fn hyprland_mapped(&self, h: crate::hyprland::Hyprland) {
+        let size = if self.prefs.window_shade {
+            (self.window_state.normal_width.max(420.0), 58.0)
+        } else {
+            (
+                self.window_state.width.max(420.0),
+                self.window_state.height.max(120.0),
+            )
+        };
+        let position = self.window_state.x.zip(self.window_state.y);
+        let pinned = self.prefs.always_on_top;
+        let lua = self.hypr_lua;
+        let _ = std::thread::Builder::new()
+            .name("niruamp-hyprland-place".into())
+            .spawn(move || {
+                for _ in 0..30 {
+                    if let Some(client) = h.own_client() {
+                        if !client.floating || client.pinned != pinned {
+                            h.float_existing(&client, size, position, pinned, lua);
+                        }
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            });
+    }
+
+    /// The window was (possibly) moved by the compositor.
+    pub(crate) fn start_drag(&mut self, ctx: &Context) {
+        self.hypr_geometry_dirty = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+
+    /// Read the floating position back from Hyprland.
+    fn read_hyprland_position(&mut self) {
+        let Some(h) = self.hypr.as_ref() else {
+            return;
+        };
+        self.hypr_geometry_dirty = false;
+        self.hypr_geometry_read = Instant::now();
+        if let Some(c) = h.own_client() {
+            if c.floating && c.workspace.name != crate::hyprland::HIDDEN_WORKSPACE {
+                self.window_state.x = Some(c.at[0]);
+                self.window_state.y = Some(c.at[1]);
+            }
+        }
+    }
+
     /// False when the window manager unmapped the window (another
     /// workspace), marked it hidden, or it is fully covered.
     pub(crate) fn window_visible(&self) -> bool {
@@ -1358,6 +1460,13 @@ impl NiruampApp {
         let window = match frame.window_handle().map(|h| h.as_raw()) {
             Ok(RawWindowHandle::Xlib(h)) => h.window as u32,
             Ok(RawWindowHandle::Xcb(h)) => h.window.get(),
+            Ok(RawWindowHandle::Wayland(_)) => {
+                if let Some(h) = self.hypr.clone() {
+                    self.hyprland_mapped(h.clone());
+                    self.visibility = crate::visibility::Visibility::spawn_hyprland(h, ctx.clone());
+                }
+                return;
+            }
             _ => return,
         };
         self.visibility = crate::visibility::Visibility::spawn(window, ctx.clone());
@@ -1408,7 +1517,11 @@ impl NiruampApp {
     fn tick_geometry(&mut self, ctx: &Context) {
         if !self.fitted_window {
             if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
-                if let Some(inner) = ctx.input(|i| i.viewport().inner_rect) {
+                let inner = ctx.input(|i| i.viewport().inner_rect).or_else(|| {
+                    (crate::session::backend() == crate::session::Backend::Wayland)
+                        .then(|| ctx.input(|i| i.screen_rect()))
+                });
+                if let Some(inner) = inner {
                     let max_w = (monitor.x * 0.96).max(400.0);
                     let max_h = (monitor.y * 0.92).max(120.0);
                     if inner.width() > max_w || inner.height() > max_h {
@@ -1430,7 +1543,18 @@ impl NiruampApp {
             return;
         }
         self.last_geometry_save = now;
-        let rect = ctx.input(|i| i.viewport().inner_rect);
+        if self.hypr.is_some()
+            && (self.hypr_geometry_dirty
+                || now.duration_since(self.hypr_geometry_read) > Duration::from_secs(30))
+        {
+            self.read_hyprland_position();
+        }
+        // Wayland reports no window position, so no inner rect either; the
+        // size is the content area, and the position comes from Hyprland.
+        let rect = ctx.input(|i| i.viewport().inner_rect).or_else(|| {
+            (crate::session::backend() == crate::session::Backend::Wayland)
+                .then(|| ctx.input(|i| i.screen_rect()))
+        });
         let outer = ctx.input(|i| i.viewport().outer_rect);
         if let Some(rect) = rect {
             let x = outer.map(|r| r.min.x).or(self.window_state.x);
@@ -2918,6 +3042,7 @@ impl eframe::App for NiruampApp {
         if let Some(tray) = self.tray.take() {
             tray.shutdown();
         }
+        self.read_hyprland_position();
         self.window_state.save().ok();
         self.prefs.save().ok();
         if self.vis.started || self.vis.requested_start {

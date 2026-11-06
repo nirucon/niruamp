@@ -48,7 +48,8 @@ LDCONFIG="$(command -v ldconfig 2>/dev/null || true)"
 if [ -z "$LDCONFIG" ] && [ -x /sbin/ldconfig ]; then LDCONFIG=/sbin/ldconfig; fi
 if [ -n "$LDCONFIG" ] && ! "$LDCONFIG" -p 2>/dev/null | grep -q 'libxkbcommon-x11.so.0'; then
   printf "%sWARNING%s libxkbcommon-x11 is not visible. If the GUI fails to start:\n" "$Y" "$N"
-  printf "  sudo apt install libxkbcommon-x11-0 libx11-6 libgl1 libegl1\n"
+  printf "  Debian/Ubuntu: sudo apt install libxkbcommon-x11-0 libx11-6 libgl1 libegl1 libwayland-client0\n"
+  printf "  Arch/Omarchy:  sudo pacman -S libxkbcommon libxkbcommon-x11 wayland mesa\n"
 fi
 
 cargo_version_ok() {

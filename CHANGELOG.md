@@ -1,3 +1,29 @@
+# NIRUAMP 0.5.0
+
+Omarchy theme and native Wayland. In the NIRU session (NIRUWM, X11) nothing
+changes: same backend, same theme resolution, same look.
+
+- Native Wayland: built with winit's Wayland and X11 backends. NIRUAMP uses
+  Wayland whenever `WAYLAND_DISPLAY` is set outside the NIRU session (crisp at
+  fractional scales); `NIRUAMP_BACKEND=x11|wayland` overrides it.
+- Omarchy theme: **Theme → Auto** follows the current Omarchy theme
+  (`colors.toml`, or `alacritty.toml` for old themes; Omarchy 4 and 3.x
+  layouts) and switches live. New choices **Omarchy · current theme** and
+  **NIRUX · current theme**. The NIRU session always follows NIRUX first.
+- Hyprland: an in-memory window rule opens NIRUAMP floating at its saved size
+  and position; Always on top pins it; minimize to tray uses
+  `special:niruamp`; the window position is read back from Hyprland; the
+  spectrum pauses when the window's workspace is not shown (event socket, no
+  polling). Uses Hyprland's IPC socket directly, Lua (0.55+) or classic
+  dispatchers.
+- Fix: no blocking vsync off a real X server. Under Wayland (and XWayland) a
+  hidden window gets no frame callbacks, so a frame drawn while hidden (the
+  clock while playing) blocked the UI thread in eglSwapBuffers and pings went
+  unanswered: Hyprland showed "Application not responding".
+- Wayland window size is saved too (Wayland reports no window position, which
+  had also hidden the size).
+- A theme that fails at start falls back to Classic instead of aborting.
+
 # NIRUAMP 0.4.0
 
 Efficiency and build release. The look, themes, views and keys are unchanged.
