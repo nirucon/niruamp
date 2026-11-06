@@ -20,8 +20,7 @@ scale 1, real session), 0.5.0 build from the release commit:**
   focus from the owner's window.
 - Theme: Auto followed the owner's Forest Vigil port (identical to NIRUX's
   Forest Vigil palette). Live switches with `omarchy-theme-set` to Tokyo Night,
-  Catppuccin Latte (light) and back applied within the 320 ms debounce;
-  screenshots below.
+  Catppuccin Latte (light) and back applied live (inotify, 320 ms debounce).
 - ANR: reproduced with the first build — playing while the window sat on
   another workspace blocked the UI thread in `eglSwapBuffers` (wchan `poll`)
   and the `xdg_wm_base` pings went unanswered for over a minute. Fixed by not
