@@ -212,6 +212,8 @@ Known limits:
 
 ## Uninstall
 
+With NIRUX: `nirux extras uninstall niruamp` runs the uninstaller below from the pinned release (add `--purge` to pass it on).
+
 ```sh
 ./uninstall.sh          # keeps NIRUAMP preferences and all NPLAY data
 ./uninstall.sh --purge  # also removes ~/.config/niruamp and ~/.local/state/niruamp
