@@ -1,92 +1,86 @@
 # NIRUAMP
 
-**A Winamp-inspired Rust frontend for [NPLAY](https://github.com/nirucon/nplay), designed for the [NIRUX](https://github.com/nirucon/nirux) desktop.**
+Winamp-inspired graphical frontend for NPLAY, written in Rust.
 
-Compact, fast, resource-conscious and unmistakably classic Winamp in character:
-a hardware-panel player deck, digital LED time, spectrum display, dense playlist
-and driven by one authoritative NPLAY playback engine.
+**Status: alpha** · Part of the [NIRUX](https://github.com/nirucon/nirux) suite · [MIT License](LICENSE)
 
-![NIRUAMP player deck](docs/screenshots/main.png)
-
-## Relationship to NIRUX and NPLAY
-
-NIRUAMP is an optional member of the **NIRUX** suite (`nirux extras install
-niruamp`). It is only the graphical presentation and interaction layer.
-
-**NIRUAMP cannot run standalone.** [NPLAY](https://github.com/nirucon/nplay)
-1.7.3 or newer is a required runtime dependency and owns playback, queue,
-providers, library, statistics, notifications and MPRIS. NPLAY is a complete
-standalone terminal player and continues to work without NIRUX or NIRUAMP.
-
-## Status
-
-**0.5.2 — runnable, installable and integrated, on NIRUX (X11) and on Wayland
-(Omarchy/Hyprland).** NIRUAMP is a Rust graphical
-client, not a second player. [NPLAY](https://github.com/nirucon/nplay) **1.7.3 or
-newer is required** (1.8.0+ for the visualization stream, 1.8.1+ for
-authorizing local Spotify playback from Settings) and remains fully usable
-standalone.
-
-The repository includes the frontend, the NPLAY headless service changes and
-tests, protocol/architecture/testing documentation, an installer, desktop entry
-and measured resource evidence. See [docs/VALIDATION.md](docs/VALIDATION.md) for
-what was and was not live-tested on the build machine.
+![NIRUAMP](docs/screenshots/main.png)
 
 More screenshots: [light theme](docs/screenshots/main-light.png),
-[search](docs/screenshots/search.png), [settings](docs/screenshots/settings.png).
+[search](docs/screenshots/search.png), [settings](docs/screenshots/settings.png),
+[windowshade](docs/screenshots/windowshade.png).
 
-## What works
+## About
 
-- Winamp-style deck with original vector artwork, LED clock, seek/volume,
-  grouped transport, shuffle/repeat, playlist and queue panels.
-- Windowshade mode, always-on-top, custom compact titlebar, remembered geometry.
-- Fullscreen visual mode: black screen, centred track/artist/album, themed
-  CAVA bars, progress and an English close hint. Open it with the title-bar
-  fullscreen button or `F11`; close it with `Esc` or `F11`.
-- Optional theme-aware SNI system tray: minimize to tray, show/play/next/previous/
-  quit menu, middle-click play/pause and scroll-wheel volume. The framed play
-  icon follows the active NIRUX palette.
-- Async federated search with stale-result protection: local, Navidrome,
-  Sveriges Radio, YouTube, Spotify and custom radio when configured.
-- Browse local artists/albums/folders, playlists, favorites, history, radio,
-  provider albums/playlists/artists and Spotify devices.
-- Queue play/add/remove/drag-reorder/clear/save; local playlists; favorites;
-  ratings; custom radio setup; drag-and-drop local media and streams.
-- Album, playlist, folder and programme context actions resolve through NPLAY
-  into their playable tracks; containers are never queued or played as fake
-  tracks. Play/Queue All only operate on playable rows.
-- Artwork from NPLAY's existing cache, decoded off the UI thread, bounded cache.
-- NIRUX appearance integration (all builtin themes, sparse custom themes and
-  sparse `appearance.toml`) with live reload and a standalone classic fallback.
+NIRUAMP is the classic, compact player window I missed: a hardware-panel deck,
+LED time, spectrum display and a dense playlist, in the spirit of Winamp but
+with original vector artwork and live NIRUX theming. It is not affiliated
+with Winamp.
+
+**NIRUAMP is a frontend only and cannot run without
+[NPLAY](https://github.com/nirucon/nplay).** NPLAY owns playback, queue,
+providers, library, statistics, notifications and MPRIS; NIRUAMP talks to
+NPLAY's local control service over a private Unix socket. NPLAY remains a
+complete standalone terminal player with or without NIRUAMP and NIRUX.
+
+It runs on X11 in the NIRUX session (NIRUWM) and natively on Wayland, for
+example on Omarchy/Hyprland.
+
+## Features
+
+- Winamp-style deck: LED clock, seek and volume, transport, shuffle/repeat,
+  attached playlist and queue panels, windowshade mode, always-on-top, a
+  compact title bar and remembered geometry.
+- Fullscreen visual mode (`F11`): black screen, centred track, artist and
+  album, themed CAVA bars and progress.
 - Real CAVA visualization at up to 30 fps (30/20/15 in Settings), pushed by
-  NPLAY 1.8.0's visualization stream, or polled from NPLAY 1.7.x;
-  fast-attack/slow-release smoothing and log-shaped bars; an honest unavailable
-  state otherwise. The spectrum pauses (and NPLAY stops CAVA) while the window
-  is on another workspace, covered, minimized or in the tray.
-- Frugal by design: one frame scheduler, no repaint while hidden, no polling
-  threads; see [docs/VALIDATION.md](docs/VALIDATION.md) for measurements.
-- Optional Winamp-inspired startup sound (Ogg Vorbis, embedded) that is a UI
-  effect only and can be disabled in Settings.
-- One backend session, one queue, one MPRIS owner and one statistics pipeline.
+  NPLAY 1.8's visualization stream; it pauses (and NPLAY stops CAVA) while
+  the window is hidden, covered, minimized or in the tray. No fake bars: a
+  clear "unavailable" state otherwise.
+- Async federated search across local music, Navidrome, Sveriges Radio,
+  YouTube, Spotify and custom radio, with stale-result protection.
+- Browse artists, albums, folders, playlists, favorites, history, radio,
+  provider albums/playlists/artists and Spotify devices.
+- Queue play/add/remove/drag-reorder/clear/save, local playlists, favorites,
+  ratings, custom radio, and drag-and-drop of local media and streams.
+  Containers (albums, playlists, folders) always resolve to playable tracks.
+- Optional theme-aware tray icon (StatusNotifierItem): minimize to tray,
+  menu, middle-click play/pause, scroll for volume.
+- Theme **Auto**: follows NIRUX in the NIRUX session and Omarchy elsewhere,
+  live; NIRUAMP Classic as the standalone fallback.
+- Frugal: one frame scheduler, no repaint while hidden, no polling threads;
+  measured in [docs/VALIDATION.md](docs/VALIDATION.md).
+- Optional Winamp-inspired startup sound (embedded, can be disabled).
 
 ## Requirements
 
-- Linux with X11 or Wayland. The UI uses `eframe`/`egui` with the Glow renderer.
-  In the NIRU session (NIRUWM) it runs on X11 exactly as before; on a Wayland
-  desktop (Omarchy/Hyprland and others) it runs natively on Wayland. Verified
-  live on Debian 13.7 (trixie) with NIRUX, and on Omarchy 4 (Hyprland 0.57.1).
-- **NPLAY 1.7.3+** with its normal runtime prerequisites (`mpv`, Python 3).
-  **NPLAY 1.8.0+** is recommended: NIRUAMP then uses its visualization stream
-  (`visualization.subscribe`) instead of polling, which costs NPLAY about a
-  third of the CPU. With 1.7.x the 1.0 polling path is used as a fallback.
-  **NPLAY 1.8.1+** adds Settings → Sources → Spotify → AUTHORIZE LOCAL
-  (librespot sign-in) and reports a Spotify play that fails for lack of it;
-  with older NPLAY that control is hidden.
-- Rust 1.85+ to build (the declared `rust-version`; Debian 13 ships 1.85).
-- Optional: `cava` (visualization), `yt-dlp` (YouTube), `librespot` (Spotify
-  local playback), Navidrome credentials, Spotify Premium for Connect playback.
+- Linux, x86_64, X11 or Wayland. Verified live on Debian 13 with NIRUX and on
+  Omarchy 4 (Hyprland).
+- **NPLAY 1.7.3 or newer** with its prerequisites (`mpv`, Python 3).
+  NPLAY 1.8.0+ is recommended (visualization stream instead of polling, about
+  a third of NPLAY's CPU), and 1.8.1+ adds **Settings → Sources → Spotify →
+  AUTHORIZE LOCAL**.
+- The prebuilt binary needs glibc 2.35+ (Debian 12+) and `libxkbcommon-x11`,
+  `libx11`, `libgl`/`libegl` at runtime. Building from source needs Rust 1.85+.
+- Optional: `cava` (visualization), `yt-dlp`, `librespot`, Navidrome
+  credentials, Spotify Premium, a StatusNotifierItem tray host.
 
-## Install
+## Installation
+
+### With NIRUX
+
+NIRUAMP is an optional extra, not part of a normal `nirux install`:
+
+```sh
+nirux extras install niruamp
+nirux extras update            # later: update selected extras to the pinned version
+```
+
+This installs or updates the pinned NPLAY first, then NIRUAMP.
+
+### Standalone
+
+Install NPLAY first, then:
 
 ```sh
 git clone https://github.com/nirucon/niruamp.git
@@ -95,203 +89,137 @@ cd niruamp
 niruamp
 ```
 
-The installer downloads the published x86_64 Linux release binary when one is
-available and falls back to a source build otherwise. It installs to
-`~/.local/bin/niruamp`, adds a desktop entry and a scalable original icon, and
-refuses to continue when NPLAY is missing or older than 1.7.3. Set
-`NIRUAMP_SKIP_NPLAY_CHECK=1` only for packaging experiments.
+The installer refuses to continue when NPLAY is missing or older than 1.7.3
+(`NIRUAMP_SKIP_NPLAY_CHECK=1` skips that, for packaging experiments only). It
+downloads the published x86_64 release binary when possible and builds with
+cargo otherwise, then installs `~/.local/bin/niruamp`, a desktop entry and an
+icon.
 
 ```sh
-./install.sh --prebuilt  # force the published binary (Debian 12+ / glibc 2.36+)
+./install.sh --prebuilt  # force the published binary
 ./install.sh --source    # always build with cargo
 ```
 
-The prebuilt archive is built by the release workflow on Ubuntu 22.04
-(glibc 2.35) for x86_64, so it runs on Debian 12+, and needs
-`libxkbcommon-x11-0`, `libx11-6`, `libgl1`/`libegl1` at runtime. Manual install:
+Manual install from the release archive:
 
 ```sh
 tar -xzf niruamp-0.5.2-x86_64-linux-gnu.tar.gz
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 
-```sh
-./uninstall.sh          # keeps NIRUAMP preferences and all NPLAY data
-./uninstall.sh --purge  # also removes NIRUAMP preferences/window state
-```
+On Omarchy/Arch the steps are the same; see [docs/WAYLAND.md](docs/WAYLAND.md).
 
-NPLAY is never modified by the uninstaller.
-
-## Omarchy / Wayland
-
-NIRUAMP 0.5 runs natively on Wayland and follows the Omarchy theme. Install on
-Omarchy (Arch) like anywhere else; NPLAY comes first:
+## Usage
 
 ```sh
-git clone https://github.com/nirucon/nplay.git && (cd nplay && ./install.sh)
-git clone https://github.com/nirucon/niruamp.git && (cd niruamp && ./install.sh)
-niruamp
+niruamp            # start, or activate the running window
+niruamp --version
+niruamp --help
 ```
 
-Omarchy already ships the runtime libraries (`wayland`, `libxkbcommon`, Mesa)
-and `cava`. On other Arch systems: `sudo pacman -S wayland libxkbcommon
-libxkbcommon-x11 mesa`.
-
-What NIRUAMP does on Wayland:
-
-- **Backend.** Native Wayland whenever `WAYLAND_DISPLAY` is set outside the NIRU
-  session, so scaling (including fractional scales such as 1.25) stays crisp.
-  `NIRUAMP_BACKEND=x11` forces XWayland, `NIRUAMP_BACKEND=wayland` forces
-  Wayland. The NIRU session always uses X11, as before.
-- **Theme.** With **Theme → Auto** NIRUAMP follows the current Omarchy theme and
-  switches live with `omarchy-theme-set`. It reads the theme's `colors.toml`
-  (Omarchy 3.4+; `~/.local/state/omarchy/current/theme` in Omarchy 4,
-  `~/.config/omarchy/current/theme` in 3.x), or `alacritty.toml` for older
-  themes. `background`/`foreground` are used as given, `accent` drives focus,
-  the LED and the spectrum, `selection` the borders, and the dimmed foreground
-  the secondary text (lifted to at least 4:1 contrast when a theme makes it too
-  faint). Light themes work like NIRUX's light themes. **Omarchy · current
-  theme** and **NIRUX · current theme** pin one source.
-- **Hyprland.** Wayland lets only the compositor place and stack windows, so
-  NIRUAMP talks to Hyprland over its IPC socket. Before the window opens it
-  registers an in-memory window rule (gone after a Hyprland reload, registered
-  again at the next start) so NIRUAMP opens floating at its saved size and
-  position, without flashing tiled first. **Always on top** pins the window
-  (Hyprland's pin: above other windows on every workspace). Minimize to tray
-  parks it on the special workspace `special:niruamp`; the tray, or starting
-  `niruamp` again, brings it back. The spectrum pauses when the window is on a
-  workspace that is not shown, exactly as under NIRUWM. Hyprland 0.55+ (Lua
-  config) is used fully; older Hyprland gets the classic dispatchers after the
-  window has mapped.
-- **Other Wayland compositors** decide position and stacking themselves; the
-  **Always on top** setting is disabled there, and the spectrum keeps running
-  while the window is hidden (the compositor still stops drawing it).
-- **Tray.** The tray icon is a StatusNotifierItem; Omarchy's shell, Waybar and
-  other SNI hosts show it.
-- **Responsiveness.** Off a real X server NIRUAMP does not wait for vsync: a
-  compositor sends no frame callbacks to a hidden window, and a swap that
-  waited for one would stop the app from answering the compositor's pings
-  (Hyprland's "Application not responding"). NIRUAMP paces its own frames.
-
-## Run and connect
-
-```sh
-niruamp
-```
-
-NIRUAMP looks for `$XDG_RUNTIME_DIR/nplay/control.sock`, then starts the
-installed `nplay --serve` automatically if no compatible service is running. A
-second NIRUAMP launch activates the existing window instead of starting another
-player. A GUI never stops a service it did not start, and an owned service is
-stopped on normal GUI exit unless “Keep playing after GUI exit” is enabled (the
-setting applies to the next service launch).
-
-For a development backend checkout without installing NPLAY:
-
-```sh
-NPLAY_DEV_PATH=/path/to/nplay niruamp
-```
-
-Manual backend use:
+NIRUAMP connects to `$XDG_RUNTIME_DIR/nplay/control.sock` and starts the
+installed `nplay --serve` itself when no compatible service is running. A GUI
+never stops a service it did not start; a service it started stops on normal
+exit unless **Keep playing after GUI exit** is on (applies to the next service
+launch). You can also run the backend by hand:
 
 ```sh
 nplay --serve
 nplay --serve --service-socket /path/to/socket --idle-exit 25
 ```
 
-## Controls
-
 | Key | Action |
 |---|---|
-| Space | Play / pause |
-| N / P | Next / previous |
-| S | Stop |
-| ← / → | Seek 5 s (Shift: 30 s) |
-| + / - | Volume |
-| M | Mute |
-| R / H | Repeat / shuffle |
-| / or Ctrl+F | Search |
-| B | Browse |
-| F | Favorite current track |
-| 1–5 | Playlist / queue / browse / settings / about |
-| W / T | Windowshade / always-on-top |
-| F11 | Fullscreen visual mode |
-| Esc | Leave fullscreen visual mode |
-| Tab / Shift+Tab | Move keyboard focus; Enter activates the focused control |
-| ↑ / ↓ | Move selection |
-| Alt+↑ / ↓ | Reorder queue |
-| Delete | Remove selected queue item |
-| Esc | Back / leave text field |
+| `Space` | Play / pause |
+| `N` / `P` | Next / previous |
+| `S` | Stop |
+| `Left` / `Right` | Seek 5 s (`Shift`: 30 s) |
+| `+` / `-` / `M` | Volume / mute |
+| `R` / `H` | Repeat / shuffle |
+| `/` or `Ctrl+F` | Search |
+| `B` | Browse |
+| `F` | Favorite the current track |
+| `1` … `5` | Playlist / queue / browse / settings / about |
+| `W` / `T` | Windowshade / always-on-top |
+| `F11` | Fullscreen visual mode (`Esc` or `F11` leaves it) |
+| `Tab` / `Shift+Tab`, `Enter` | Move focus, activate the focused control |
+| `Up` / `Down` | Move selection |
+| `Alt+Up` / `Alt+Down` | Reorder the queue |
+| `Delete` | Remove the selected queue item |
+| `Esc` | Back / leave a text field |
 
-Minimize hides NIRUAMP to the system tray when a StatusNotifierItem host is
-available; left-click the tray icon to restore it. Shortcuts never steal typing
-from text fields. Right-click a track for queue,
-playlist, favorite and detail actions. Drag local media onto the window to play
-it; extra files are queued.
+Shortcuts never steal typing from text fields. Right-click a track for queue,
+playlist, favorite and detail actions. Drag local media onto the window to
+play it; extra files are queued. Minimize hides to the tray when a tray host
+exists; left-click the tray icon to restore.
 
-## Architecture
+## Configuration
 
-NIRUAMP is presentation and interaction only. NPLAY owns playback, providers,
-queue, library, listening statistics, notifications and MPRIS. NPLAY 1.7.0 added
-a small versioned JSON-RPC service over a private Unix socket; both the terminal
-UI and NIRUAMP consume the same controller.
+Settings are changed in the app (`4` or the settings tab) and saved to
+`~/.config/niruamp/config.toml`: theme, scale, always-on-top, keep playing,
+visualization on/off and frame rate, pausing the hidden visualization,
+startup sound, tray, reduced motion, remaining time, and the `nplay_bin` to
+start.
 
-- `src/app.rs` — application state, commands, lifecycle, keyboard and layout.
-- `src/protocol.rs` — JSON-RPC client, framing and reconnect-safe event stream.
-- `src/platform.rs` — backend discovery/spawn, ownership, single instance.
-- `src/theme.rs` — NIRUX appearance resolution, builtin/custom themes, watcher.
-- `src/views/` — deck, playlist/queue, browser and settings.
-- `docs/ARCHITECTURE.md`, [docs/PROTOCOL.md](docs/PROTOCOL.md),
-  [docs/TESTING.md](docs/TESTING.md).
+With **Theme → Auto** the palette comes from NIRUX (`~/.config/niruwm/config.toml`,
+custom `~/.config/niruwm/themes/NAME.toml`, `appearance.toml` overrides) or,
+outside the NIRUX session, the current Omarchy theme. The full resolution
+order is in [docs/WAYLAND.md](docs/WAYLAND.md#theme-resolution).
 
-The deck and playlist are attached panels in one window. This is deliberately
-more reliable than juggling multiple native windows across WMs and keeps focus,
-keyboard navigation and windowshade behavior coherent. It is not a pixel-for-pixel
-275×116 reproduction: controls remain legible and clickable on modern displays.
+Environment variables:
 
-## Appearance
+| Variable | Effect |
+|---|---|
+| `NIRUAMP_BACKEND=x11` / `wayland` | Force XWayland or native Wayland (default: Wayland when `WAYLAND_DISPLAY` is set outside the NIRUX session) |
+| `NPLAY_SERVICE_SOCKET=PATH` | Connect to an existing NPLAY control socket |
+| `NPLAY_BIN=PATH` | Start an alternative NPLAY executable |
+| `NPLAY_DEV_PATH=/path/to/nplay` | Use an NPLAY source checkout instead of the installed one |
+| `NIRUAMP_SKIP_STARTUP_SOUND` | Skip the startup sound (any value) |
+| `NIRUAMP_DEBUG_FPS` | Print frames/s and NPLAY messages/s every 5 s |
 
-By default (**Theme → Auto**) NIRUAMP follows the desktop: in the NIRU session
-always NIRUX, elsewhere the current Omarchy theme when there is one (see
-[Omarchy / Wayland](#omarchy--wayland)), otherwise NIRUX's configuration if it
-exists. The NIRUX rules are:
+## Files and paths
 
-1. `$XDG_CONFIG_HOME/niruwm/config.toml` selects the theme.
-2. A custom `$XDG_CONFIG_HOME/niruwm/themes/NAME.toml` wins, exactly like NIRUX.
-3. Otherwise the compiled builtin palette is used and a valid schema-1
-   `appearance.toml` may override semantic roles plus font, spacing, focus width
-   and reduced motion.
-4. Invalid appearance files are ignored; a malformed custom theme is reported
-   without replacing a working appearance.
+| Path | Purpose |
+|---|---|
+| `~/.local/bin/niruamp` | The binary |
+| `~/.local/share/applications/niruamp.desktop` | Desktop entry |
+| `~/.local/share/icons/hicolor/scalable/apps/niruamp.svg` | Icon |
+| `~/.config/niruamp/config.toml` | Preferences |
+| `~/.local/state/niruamp/window.toml` | Window geometry and state |
+| `$XDG_RUNTIME_DIR/nplay/control.sock` | NPLAY control service socket |
 
-Choose **Settings → Theme → NIRUAMP Classic** for the standalone fallback. Theme
-and appearance changes apply live after a debounce.
+Navidrome and Spotify credentials stay in NPLAY's `0600` secrets file; NIRUAMP
+never reads or displays them.
 
-## Honest limitations
+## Troubleshooting
 
-- No equalizer: NPLAY exposes no EQ DSP for mpv, and Spotify is not routed
-  through mpv. NIRUAMP does not draw a fake EQ.
-- No legacy `.wsz` skin compatibility in this release; the character comes from
-  original vector controls and live NIRUX theming.
-- Visualization needs CAVA and the host audio capture path. When CAVA is absent
-  or delivery stops, NIRUAMP shows a clear unavailable state rather than random
-  bars. Live radio/YouTube visualization depends on what CAVA can capture.
-- Live radio cannot seek; Spotify EQ and some source-specific operations remain
-  backend limitations, surfaced as disabled states.
-- On Wayland compositors other than Hyprland, NIRUAMP cannot restore its
-  window position or keep itself on top; the compositor decides.
-- Tray support is optional and best-effort. Without a D-Bus StatusNotifierItem
-  host, minimize falls back to a normal minimized window. The tray icon follows
-  the active NIRUX palette.
-- “Keep playing” is an explicit NPLAY service ownership choice, not hidden
-  background behavior.
-- Navidrome/Spotify credentials and OAuth stay in NPLAY's `0600` secrets file.
-  The GUI never reads or displays them.
-- Live playback, accounts, CAVA and provider services were not available on the
-  build host; automated tests use the real NPLAY controller with a deterministic
-  mpv IPC harness, and the report states exactly which tests were live.
+- **"NPLAY is missing or too old".** Install or update NPLAY (1.7.3+); with
+  NIRUX, `nirux extras install niruamp` does it for you.
+- **No spectrum.** Install `cava`. Visualization depends on what CAVA can
+  capture from your audio setup; live radio and YouTube depend on that too.
+- **No tray icon.** Tray support needs a StatusNotifierItem host; without one,
+  minimize gives a normal minimized window.
+- **Position or always-on-top is not kept on Wayland.** Only Hyprland is
+  supported for that; other compositors decide placement themselves.
+  Details in [docs/WAYLAND.md](docs/WAYLAND.md).
 
-## Development and tests
+Known limits:
+
+- No equalizer (NPLAY has no EQ DSP for mpv, and Spotify does not go through
+  mpv), and no `.wsz` skins.
+- Live radio cannot seek; some source-specific operations are backend limits
+  and show as disabled.
+
+## Uninstall
+
+```sh
+./uninstall.sh          # keeps NIRUAMP preferences and all NPLAY data
+./uninstall.sh --purge  # also removes ~/.config/niruamp and ~/.local/state/niruamp
+```
+
+NPLAY is never modified by the uninstaller.
+
+## Building from source
 
 ```sh
 cargo fmt --all -- --check
@@ -300,17 +228,51 @@ cargo test
 cargo build --release --locked
 ```
 
-NPLAY service and regression tests (from the NPLAY repository):
+NPLAY's service and regression tests live in the NPLAY repository
+(`python3 -m unittest discover -s tests -v`). Layout:
 
-```sh
-python3 -m unittest discover -s tests -v
-```
+- `src/app.rs`: application state, commands, lifecycle, keyboard, layout
+- `src/protocol.rs`: JSON-RPC client, framing, reconnect-safe event stream
+- `src/platform.rs`: backend discovery/spawn, ownership, single instance
+- `src/theme.rs`: NIRUX and Omarchy appearance, watcher
+- `src/hyprland.rs`, `src/omarchy.rs`: Wayland/Hyprland and Omarchy integration
+- `src/views/`: deck, playlist/queue, browser, settings, immersive mode
 
-See [docs/TESTING.md](docs/TESTING.md) for the fake mpv/CAVA harness, lifecycle
-matrix and Xvfb screenshot procedure, and [docs/VALIDATION.md](docs/VALIDATION.md)
-for measured CPU/RSS, test machines and remaining gaps.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PROTOCOL.md](docs/PROTOCOL.md),
+[docs/TESTING.md](docs/TESTING.md) (fake mpv/CAVA harness, Xvfb screenshots)
+and [docs/VALIDATION.md](docs/VALIDATION.md) (what was and was not live-tested,
+CPU/RSS measurements). Release history: [CHANGELOG.md](CHANGELOG.md).
+
+## Status, disclaimer and how it's made
+
+**Status: alpha.** It installs, runs and is integrated on NIRUX (X11) and on Omarchy/Hyprland (Wayland), but it is young: live playback with real accounts and providers has been tested less than the automated harness, and some features (EQ, skins) are deliberately missing.
+
+NIRUX and every niru* project are made by me, Nicklas Rudolfsson
+([@nirucon](https://github.com/nirucon)), for me. They are tailored to my own
+needs, preferences and workflows, on my own machines. If they fit yours too,
+that's a nice bonus.
+
+- **Free and open source.** Anyone is free to use, study, change and share
+  it under the [MIT License](LICENSE).
+- **No guarantees.** There is no warranty of any kind. Use it at your own
+  risk, read what you install and keep backups of anything that matters.
+- **How it's made.** Some of these projects I built from scratch by hand. In
+  more recent releases I have used Claude, Anthropic's AI, to do much of the
+  heavy lifting under my direction: I decide what to build and how it should
+  behave, and I test it on my own machines. It saves me a lot of time, and
+  the result is quite OK.
+- **Alpha, beta, dev, and maybe forever.** Most things here are alpha, beta
+  or dev, and may stay that way. Maybe one day there will be a real stable
+  release, but given how fast development moves, and how I am as a person,
+  maybe never :)
+
+| Label | Meaning |
+|---|---|
+| dev | Under active construction; may not build, install or work yet. |
+| alpha | Works on my machines, but incomplete or rough; expect breaking changes. |
+| beta | In daily use on my machines and mostly complete; rough edges remain. |
 
 ## License
 
-MIT. Original artwork and icons are drawn in code. Independent project; not
-affiliated with Winamp.
+MIT License, see [LICENSE](LICENSE). Copyright (c) 2026 Nicklas Rudolfsson.
+Original artwork and icons are drawn in code.
