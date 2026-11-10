@@ -76,7 +76,8 @@ nirux extras install niruamp
 nirux extras update            # later: update selected extras to the pinned version
 ```
 
-This installs or updates the pinned NPLAY first, then NIRUAMP.
+This installs or updates the pinned NPLAY first, then NIRUAMP. In NIRUX,
+`nirux manual niruamp` opens the short tour in the NIRUX manual.
 
 ### Standalone
 
@@ -136,6 +137,7 @@ nplay --serve --service-socket /path/to/socket --idle-exit 25
 | `Left` / `Right` | Seek 5 s (`Shift`: 30 s) |
 | `+` / `-` / `M` | Volume / mute |
 | `R` / `H` | Repeat / shuffle |
+| `V` | Visualization on / off |
 | `/` or `Ctrl+F` | Search |
 | `B` | Browse |
 | `F` | Favorite the current track |
@@ -159,7 +161,7 @@ Settings are changed in the app (`4` or the settings tab) and saved to
 `~/.config/niruamp/config.toml`: theme, scale, always-on-top, keep playing,
 visualization on/off and frame rate, pausing the hidden visualization,
 startup sound, tray, reduced motion, remaining time, and the `nplay_bin` to
-start.
+start (the NPLAY executable, default `nplay`).
 
 With **Theme → Auto** the palette comes from NIRUX (`~/.config/niruwm/config.toml`,
 custom `~/.config/niruwm/themes/NAME.toml`, `appearance.toml` overrides) or,
@@ -172,7 +174,6 @@ Environment variables:
 |---|---|
 | `NIRUAMP_BACKEND=x11` / `wayland` | Force XWayland or native Wayland (default: Wayland when `WAYLAND_DISPLAY` is set outside the NIRUX session) |
 | `NPLAY_SERVICE_SOCKET=PATH` | Connect to an existing NPLAY control socket |
-| `NPLAY_BIN=PATH` | Start an alternative NPLAY executable |
 | `NPLAY_DEV_PATH=/path/to/nplay` | Use an NPLAY source checkout instead of the installed one |
 | `NIRUAMP_SKIP_STARTUP_SOUND` | Skip the startup sound (any value) |
 | `NIRUAMP_DEBUG_FPS` | Print frames/s and NPLAY messages/s every 5 s |
