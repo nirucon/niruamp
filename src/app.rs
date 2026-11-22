@@ -1,17 +1,19 @@
 //! NIRUAMP application state, protocol orchestration and top-level layout.
 use crate::config::{Preferences, WindowState};
-use crate::model::*;
-use crate::platform::{self, BackendHandle, DependencyError, InstanceGuard};
-use crate::protocol::Incoming;
-use crate::theme::{self, Palette, ResolvedTheme, ThemeEvent, ThemeWatcher};
-use crate::tray::{TrayCommand, TrayHandle};
-use egui::{
+use crate::gui::{
     Align2, Color32, Context, Frame, Id, Key, LayerId, Order, Rect, RichText, Sense, Stroke,
     TextureHandle, Ui, Vec2,
 };
+use crate::model::*;
+use crate::platform::{self, BackendHandle, DependencyError, InstanceGuard};
+use crate::protocol::Incoming;
+use crate::shell::Wake;
+use crate::theme::{self, Palette, ResolvedTheme, ThemeEvent, ThemeWatcher};
+use crate::tray::{TrayCommand, TrayHandle};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU8;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -354,7 +356,7 @@ pub struct NiruampApp {
     pub(crate) vis: VisState,
     pub(crate) artwork: ArtworkStore,
     pub(crate) decode_tx: Sender<(String, String)>,
-    pub(crate) decode_rx: Receiver<(String, Result<egui::ColorImage, String>)>,
+    pub(crate) decode_rx: Receiver<(String, Result<crate::gui::ColorImage, String>)>,
     pub(crate) toasts: VecDeque<Toast>,
     pub(crate) modal: Option<Modal>,
     pub(crate) playlists: Vec<PlaylistInfo>,
@@ -382,12 +384,14 @@ pub struct NiruampApp {
     pub(crate) fps_frames: u64,
     pub(crate) debug_messages: u64,
     pub(crate) ctx: Context,
+    pub(crate) wake: Wake,
     pub(crate) fitted_window: bool,
     pub(crate) text_input_active: bool,
     pub(crate) tray: Option<TrayHandle>,
     pub(crate) tray_rx: Receiver<TrayCommand>,
     pub(crate) tray_error: Option<String>,
     pub(crate) hidden_to_tray: bool,
+    pub(crate) tray_pending: Option<Sender<TrayCommand>>,
     pub(crate) startup_sound_done: bool,
     pub(crate) immersive: bool,
     /// X11 map/obscured/hidden state of our window (None until the first
@@ -405,13 +409,14 @@ pub struct NiruampApp {
 
 impl NiruampApp {
     pub fn new(
-        cc: &eframe::CreationContext<'_>,
+        ctx: Context,
+        wake: Wake,
         prefs: Preferences,
         initial: Result<BackendHandle, DependencyError>,
         instance: Option<InstanceGuard>,
         window_state: WindowState,
+        vis_state: Arc<AtomicU8>,
     ) -> Self {
-        let ctx = cc.egui_ctx.clone();
         let theme = theme::resolve(&prefs).unwrap_or_else(|e| {
             let mut t = theme::resolve(&Preferences::default())
                 .or_else(|_| {
@@ -426,16 +431,19 @@ impl NiruampApp {
         });
         theme::install_style(&ctx, &theme, &prefs);
         let prefs_shared = Arc::new(Mutex::new(prefs.clone()));
-        let watcher = ThemeWatcher::spawn(prefs_shared.clone(), ctx.clone());
+        let watcher = ThemeWatcher::spawn(prefs_shared.clone(), wake.clone());
         let (decode_tx, decode_job_rx) = mpsc::channel::<(String, String)>();
         let (decode_done_tx, decode_rx) =
-            mpsc::channel::<(String, Result<egui::ColorImage, String>)>();
+            mpsc::channel::<(String, Result<crate::gui::ColorImage, String>)>();
+        let decode_wake = wake.clone();
         std::thread::Builder::new()
             .name("niruamp-artwork-decode".into())
+            .stack_size(256 * 1024)
             .spawn(move || {
                 while let Ok((key, data)) = decode_job_rx.recv() {
                     let result = decode_artwork(&data);
                     let _ = decode_done_tx.send((key, result));
+                    decode_wake();
                 }
             })
             .ok();
@@ -445,21 +453,13 @@ impl NiruampApp {
         };
         let tab = Tab::from_key(&prefs.active_tab);
         let (tray_tx, tray_rx) = mpsc::channel();
-        let (tray, tray_error) = if prefs.tray_enabled {
-            match TrayHandle::spawn(tray_tx, ctx.clone(), &theme.palette) {
-                Ok(tray) => (Some(tray), None),
-                Err(e) => {
-                    eprintln!("niruamp: system tray unavailable: {e}");
-                    (None, Some(e))
-                }
-            }
-        } else {
-            (None, None)
-        };
+        // The tray (D-Bus) starts after the first frame is on screen.
+        let tray_pending = prefs.tray_enabled.then_some(tray_tx);
+        let (tray, tray_error): (Option<TrayHandle>, Option<String>) = (None, None);
         let (instance, instance_rx) = match instance {
             Some(mut guard) => {
                 let (tx, rx) = mpsc::channel();
-                guard.start_listener(tx, ctx.clone());
+                guard.start_listener(tx, wake.clone());
                 (Some(guard), rx)
             }
             None => {
@@ -523,30 +523,29 @@ impl NiruampApp {
             fps_frames: 0,
             debug_messages: 0,
             ctx: ctx.clone(),
+            wake: wake.clone(),
             fitted_window: false,
             text_input_active: false,
             tray,
             tray_rx,
             tray_error,
             hidden_to_tray: false,
+            tray_pending,
             startup_sound_done: false,
             immersive: false,
-            visibility: None,
+            visibility: Some(crate::visibility::Visibility::shared(vis_state)),
             visibility_probed: false,
             hypr: None,
             hypr_lua: false,
             hypr_geometry_dirty: false,
             hypr_geometry_read: Instant::now(),
         };
-        if crate::session::backend() == crate::session::Backend::Wayland {
-            if let Some(h) = crate::hyprland::Hyprland::detect() {
-                app.hypr_lua = h.speaks_lua();
-                app.hypr = Some(h);
-            }
+        if let Some(h) = crate::hyprland::Hyprland::detect() {
+            app.hypr_lua = h.speaks_lua();
+            app.hypr = Some(h);
         }
         if let Some(b) = &app.backend {
-            let c = ctx.clone();
-            b.client.set_wake(backend_wake(c));
+            b.client.set_wake(app.wake.clone());
         }
         app.initialize_from_backend(&ctx);
         app
@@ -555,8 +554,8 @@ impl NiruampApp {
     fn initialize_from_backend(&mut self, ctx: &Context) {
         self.reduce_motion = theme::reduced_motion(&self.theme, &self.prefs);
         if self.prefs.always_on_top {
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                egui::WindowLevel::AlwaysOnTop,
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::WindowLevel(
+                crate::gui::WindowLevel::AlwaysOnTop,
             ));
         }
         for w in self.theme.warnings.clone() {
@@ -573,7 +572,7 @@ impl NiruampApp {
             self.request("playlists.list", json!({}), Some(PendingKind::Playlists));
         }
         if self.prefs.window_shade {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::InnerSize(Vec2::new(
                 self.window_state.normal_width.max(420.0),
                 self.deck_height,
             )));
@@ -709,8 +708,7 @@ impl NiruampApp {
         self.just_retried = Some(Instant::now());
         match platform::ensure_backend(&self.prefs, true) {
             Ok(b) => {
-                let c = ctx.clone();
-                b.client.set_wake(backend_wake(c));
+                b.client.set_wake(self.wake.clone());
                 self.snapshot = b.snapshot.clone();
                 self.backend = Some(b);
                 self.backend_error = None;
@@ -769,9 +767,9 @@ impl NiruampApp {
         while let Ok((key, result)) = self.decode_rx.try_recv() {
             match result {
                 Ok(image) => {
-                    let bytes = image.pixels.len() * 4;
+                    let bytes = image.pixel_count() * 4;
                     let texture =
-                        ctx.load_texture(key.clone(), image, egui::TextureOptions::LINEAR);
+                        ctx.load_texture(key.clone(), image, crate::gui::TextureOptions::LINEAR);
                     // Evicted handles free their GPU texture when dropped.
                     self.artwork.cache.insert(key, bytes, texture);
                 }
@@ -786,9 +784,9 @@ impl NiruampApp {
                 // Brings it back from the tray workspace and focuses it.
                 self.show_from_tray(ctx);
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::Focus);
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::Minimized(false));
             self.toast("NIRUAMP is already running", false);
         }
         let mut theme_events = Vec::new();
@@ -1252,7 +1250,7 @@ impl NiruampApp {
                 TrayCommand::Toggle => self.toggle(),
                 TrayCommand::Next => self.next(),
                 TrayCommand::Previous => self.previous(),
-                TrayCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                TrayCommand::Quit => ctx.send_viewport_cmd(crate::gui::ViewportCommand::Close),
                 TrayCommand::Volume(delta) => self.volume_delta(delta as f64),
             }
         }
@@ -1278,9 +1276,9 @@ impl NiruampApp {
         if self.tray.is_some() && self.prefs.tray_enabled {
             self.hidden_to_tray = true;
             self.stop_visualization();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::Visible(false));
         } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::Minimized(true));
         }
     }
 
@@ -1293,9 +1291,9 @@ impl NiruampApp {
                 return;
             }
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.send_viewport_cmd(crate::gui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(crate::gui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(crate::gui::ViewportCommand::Focus);
         ctx.request_repaint();
     }
 
@@ -1303,7 +1301,7 @@ impl NiruampApp {
         self.prefs.tray_enabled = enabled;
         if enabled && self.tray.is_none() {
             let (tx, rx) = mpsc::channel();
-            match TrayHandle::spawn(tx, ctx.clone(), &self.theme.palette) {
+            match TrayHandle::spawn(tx, self.wake.clone(), &self.theme.palette) {
                 Ok(tray) => {
                     self.tray = Some(tray);
                     self.tray_error = None;
@@ -1503,7 +1501,7 @@ impl NiruampApp {
     /// The window was (possibly) moved by the compositor.
     pub(crate) fn start_drag(&mut self, ctx: &Context) {
         self.hypr_geometry_dirty = true;
-        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        ctx.send_viewport_cmd(crate::gui::ViewportCommand::StartDrag);
     }
 
     /// Read the floating position back from Hyprland.
@@ -1530,25 +1528,19 @@ impl NiruampApp {
             || self.visibility.as_ref().is_none_or(|v| v.visible())
     }
 
-    fn probe_visibility(&mut self, ctx: &Context, frame: &eframe::Frame) {
+    fn probe_visibility(&mut self, _ctx: &Context) {
         if self.visibility_probed {
             return;
         }
         self.visibility_probed = true;
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let window = match frame.window_handle().map(|h| h.as_raw()) {
-            Ok(RawWindowHandle::Xlib(h)) => h.window as u32,
-            Ok(RawWindowHandle::Xcb(h)) => h.window.get(),
-            Ok(RawWindowHandle::Wayland(_)) => {
-                if let Some(h) = self.hypr.clone() {
-                    self.hyprland_mapped(h.clone());
-                    self.visibility = crate::visibility::Visibility::spawn_hyprland(h, ctx.clone());
-                }
-                return;
+        // Under Hyprland the compositor knows best whether the window shows:
+        // its workspace may be hidden while X still reports it mapped.
+        if let Some(h) = self.hypr.clone() {
+            self.hyprland_mapped(h.clone());
+            if let Some(v) = crate::visibility::Visibility::spawn_hyprland(h, self.wake.clone()) {
+                self.visibility = Some(v);
             }
-            _ => return,
-        };
-        self.visibility = crate::visibility::Visibility::spawn(window, ctx.clone());
+        }
     }
 
     /// Spectrum frame interval: the poll period and the easing step.
@@ -1596,15 +1588,12 @@ impl NiruampApp {
     fn tick_geometry(&mut self, ctx: &Context) {
         if !self.fitted_window {
             if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
-                let inner = ctx.input(|i| i.viewport().inner_rect).or_else(|| {
-                    (crate::session::backend() == crate::session::Backend::Wayland)
-                        .then(|| ctx.input(|i| i.screen_rect()))
-                });
+                let inner = ctx.input(|i| i.viewport().inner_rect);
                 if let Some(inner) = inner {
                     let max_w = (monitor.x * 0.96).max(400.0);
                     let max_h = (monitor.y * 0.92).max(120.0);
                     if inner.width() > max_w || inner.height() > max_h {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                        ctx.send_viewport_cmd(crate::gui::ViewportCommand::InnerSize(Vec2::new(
                             inner.width().min(max_w),
                             if self.prefs.window_shade {
                                 inner.height()
@@ -1630,10 +1619,7 @@ impl NiruampApp {
         }
         // Wayland reports no window position, so no inner rect either; the
         // size is the content area, and the position comes from Hyprland.
-        let rect = ctx.input(|i| i.viewport().inner_rect).or_else(|| {
-            (crate::session::backend() == crate::session::Backend::Wayland)
-                .then(|| ctx.input(|i| i.screen_rect()))
-        });
+        let rect = ctx.input(|i| i.viewport().inner_rect);
         let outer = ctx.input(|i| i.viewport().outer_rect);
         if let Some(rect) = rect {
             let x = outer.map(|r| r.min.x).or(self.window_state.x);
@@ -2452,7 +2438,8 @@ impl NiruampApp {
             return;
         }
         let focused = ctx.memory(|m| m.focused().is_some());
-        let typing = self.text_input_active;
+        // A focused text field (search, dialogs) owns the keyboard.
+        let typing = self.text_input_active || ctx.text_edit_focused();
         let shift = ctx.input(|i| i.modifiers.shift);
         let alt = ctx.input(|i| i.modifiers.alt);
         let ctrl = ctx.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -2500,7 +2487,7 @@ impl NiruampApp {
             self.prefs.show_visualization = !self.prefs.show_visualization;
             self.update_prefs(ctx);
         }
-        if ctx.input(|i| i.key_pressed(Key::F)) {
+        if !ctrl && ctx.input(|i| i.key_pressed(Key::F)) {
             if let Some(t) = self.playback.current.clone() {
                 self.favorite(&t);
             }
@@ -2595,11 +2582,11 @@ impl NiruampApp {
 
     fn draw_title_and_body(&mut self, ctx: &Context) {
         let p = self.palette();
-        egui::CentralPanel::default()
+        crate::gui::CentralPanel::default()
             .frame(
                 Frame::none()
                     .fill(p.background)
-                    .inner_margin(egui::Margin::same(0.0)),
+                    .inner_margin(crate::gui::Margin::same(0.0)),
             )
             .show(ctx, |ui| {
                 if self.backend_error.is_some() && self.backend.is_none() {
@@ -2610,11 +2597,14 @@ impl NiruampApp {
                 let margin = self.s(8.0);
                 ui.add_space(margin);
                 let deck_rect = Rect::from_min_size(
-                    ui.cursor().min + egui::vec2(margin, 0.0),
-                    egui::vec2(width - margin * 2.0, self.deck_height),
+                    ui.cursor().min + crate::gui::vec2(margin, 0.0),
+                    crate::gui::vec2(width - margin * 2.0, self.deck_height),
                 );
-                let mut deck_ui =
-                    ui.child_ui(deck_rect, egui::Layout::top_down(egui::Align::Min), None);
+                let mut deck_ui = ui.child_ui(
+                    deck_rect,
+                    crate::gui::Layout::top_down(crate::gui::Align::Min),
+                    None,
+                );
                 self.deck_ui(&mut deck_ui, ctx);
                 self.deck_height = deck_ui.min_rect().height();
                 ui.add_space(self.deck_height);
@@ -2623,7 +2613,7 @@ impl NiruampApp {
                     let rest = ui.available_size();
                     let panel_rect = Rect::from_min_size(
                         ui.cursor().min,
-                        egui::vec2(width - margin * 2.0, rest.y - margin),
+                        crate::gui::vec2(width - margin * 2.0, rest.y - margin),
                     );
                     ui.allocate_ui_at_rect(panel_rect, |ui| {
                         self.panel_ui(ui, ctx);
@@ -2632,8 +2622,8 @@ impl NiruampApp {
                 if !self.prefs.window_shade {
                     let size = self.s(14.0);
                     let grip = Rect::from_min_size(
-                        ui.max_rect().right_bottom() - egui::vec2(size, size),
-                        egui::vec2(size, size),
+                        ui.max_rect().right_bottom() - crate::gui::vec2(size, size),
+                        crate::gui::vec2(size, size),
                     );
                     let resp = ui.interact(
                         grip,
@@ -2647,23 +2637,23 @@ impl NiruampApp {
                     if resp.dragged() {
                         let delta = ctx.input(|i| i.pointer.delta());
                         if let Some(inner) = ctx.input(|i| i.viewport().inner_rect) {
-                            let target = egui::vec2(
+                            let target = crate::gui::vec2(
                                 (inner.width() + delta.x).max(self.s(400.0)),
                                 (inner.height() + delta.y).max(self.s(120.0)),
                             );
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
+                            ctx.send_viewport_cmd(crate::gui::ViewportCommand::InnerSize(target));
                         }
                     }
                     if resp.hovered() || resp.dragged() {
-                        ctx.set_cursor_icon(egui::CursorIcon::ResizeSouthEast);
+                        ctx.set_cursor_icon(crate::gui::CursorIcon::ResizeSouthEast);
                     }
                     let p = self.palette();
                     for i in 0..3 {
                         let off = self.s(3.0) + i as f32 * self.s(3.0);
                         ui.painter().line_segment(
                             [
-                                grip.right_bottom() - egui::vec2(off, self.s(2.0)),
-                                grip.right_bottom() - egui::vec2(self.s(2.0), off),
+                                grip.right_bottom() - crate::gui::vec2(off, self.s(2.0)),
+                                grip.right_bottom() - crate::gui::vec2(self.s(2.0), off),
                             ],
                             Stroke::new(1.0_f32, p.muted),
                         );
@@ -2686,23 +2676,23 @@ impl NiruampApp {
                 ui.add_space(8.0);
                 ui.label(RichText::new(err.message).size(self.s(14.0)).color(p.foreground));
                 ui.add_space(10.0);
-                Frame::none().fill(p.inset).inner_margin(egui::Margin::same(12.0)).show(ui, |ui| {
+                Frame::none().fill(p.inset).inner_margin(crate::gui::Margin::same(12.0)).show(ui, |ui| {
                     ui.label(RichText::new(err.remedy).size(self.s(13.0)).color(p.muted));
                 });
                 if !err.log_tail.is_empty() {
                     ui.add_space(8.0);
                     ui.label(RichText::new("NPLAY service log").size(self.s(10.0)).color(p.muted).strong());
-                    Frame::none().fill(p.inset).inner_margin(egui::Margin::same(8.0)).show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(&err.log_tail).monospace().size(self.s(10.0)).color(p.muted)).wrap());
+                    Frame::none().fill(p.inset).inner_margin(crate::gui::Margin::same(8.0)).show(ui, |ui| {
+                        ui.add(crate::gui::Label::new(RichText::new(&err.log_tail).monospace().size(self.s(10.0)).color(p.muted)).wrap());
                     });
                 }
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new("RETRY CONNECTION").strong())).clicked() {
+                    if ui.add(crate::gui::Button::new(RichText::new("RETRY CONNECTION").strong())).clicked() {
                         self.retry_backend(ctx);
                     }
-                    if ui.add(egui::Button::new("QUIT")).clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    if ui.add(crate::gui::Button::new("QUIT")).clicked() {
+                        ctx.send_viewport_cmd(crate::gui::ViewportCommand::Close);
                     }
                 });
                 ui.add_space(8.0);
@@ -2735,8 +2725,8 @@ impl NiruampApp {
                 1.0
             };
             let rect = Rect::from_min_size(
-                egui::pos2(screen.center().x - width / 2.0, y - self.s(34.0)),
-                egui::vec2(width, self.s(30.0)),
+                crate::gui::pos2(screen.center().x - width / 2.0, y - self.s(34.0)),
+                crate::gui::vec2(width, self.s(30.0)),
             );
             let fill = if toast.error { p.error } else { p.surface_hi };
             let text_color = if toast.error {
@@ -2744,17 +2734,21 @@ impl NiruampApp {
             } else {
                 p.foreground
             };
-            painter.rect_filled(rect, egui::Rounding::same(2.0), fill.gamma_multiply(alpha));
+            painter.rect_filled(
+                rect,
+                crate::gui::Rounding::same(2.0),
+                fill.gamma_multiply(alpha),
+            );
             painter.rect_stroke(
                 rect,
-                egui::Rounding::same(2.0),
+                crate::gui::Rounding::same(2.0),
                 Stroke::new(1.0_f32, p.border.gamma_multiply(alpha)),
             );
             painter.text(
-                rect.left_center() + egui::vec2(self.s(10.0), 0.0),
+                rect.left_center() + crate::gui::vec2(self.s(10.0), 0.0),
                 Align2::LEFT_CENTER,
                 &toast.text,
-                egui::FontId::proportional(self.s(12.0)),
+                crate::gui::FontId::proportional(self.s(12.0)),
                 text_color.gamma_multiply(alpha),
             );
             y -= self.s(38.0);
@@ -2772,14 +2766,14 @@ impl NiruampApp {
         let mut submit = false;
         let mut text_focus = false;
         let is_save_queue = matches!(&modal, Modal::SaveQueue { .. });
-        egui::Area::new(Id::new("niruamp-modal"))
+        crate::gui::Area::new(Id::new("niruamp-modal"))
             .order(Order::Foreground)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
                 Frame::popup(&ctx.style())
                     .fill(p.panel)
                     .stroke(Stroke::new(1.0_f32, p.border))
-                    .inner_margin(egui::Margin::same(16.0))
+                    .inner_margin(crate::gui::Margin::same(16.0))
                     .show(ui, |ui| {
                         ui.set_min_width(s(360.0));
                         match &mut modal {
@@ -2787,7 +2781,7 @@ impl NiruampApp {
                                 let title = if is_save_queue { "SAVE QUEUE AS PLAYLIST" } else { "NEW PLAYLIST" };
                                 ui.label(RichText::new(title).strong().color(p.foreground));
                                 ui.add_space(6.0);
-                                let resp = ui.add(egui::TextEdit::singleline(name).hint_text("Playlist name"));
+                                let resp = ui.add(crate::gui::TextEdit::singleline(name).hint_text("Playlist name"));
                                 if !resp.has_focus() && resp.ctx.memory(|m| m.focused().is_none()) {
                                     resp.request_focus();
                                 }
@@ -2802,7 +2796,7 @@ impl NiruampApp {
                             Modal::RenamePlaylist { name, .. } => {
                                 ui.label(RichText::new("RENAME PLAYLIST").strong().color(p.foreground));
                                 ui.add_space(6.0);
-                                let resp = ui.add(egui::TextEdit::singleline(name).hint_text("Playlist name"));
+                                let resp = ui.add(crate::gui::TextEdit::singleline(name).hint_text("Playlist name"));
                                 if !resp.has_focus() && resp.ctx.memory(|m| m.focused().is_none()) {
                                     resp.request_focus();
                                 }
@@ -2818,9 +2812,9 @@ impl NiruampApp {
                                 ui.label(RichText::new("CONFIGURE NAVIDROME").strong().color(p.foreground));
                                 ui.label(RichText::new("Credentials are stored by NPLAY with mode 0600 and are never returned to this UI.").small().color(p.muted));
                                 ui.add_space(6.0);
-                                text_focus |= ui.add(egui::TextEdit::singleline(url).hint_text("https://music.example.org")).has_focus();
-                                text_focus |= ui.add(egui::TextEdit::singleline(user).hint_text("Username")).has_focus();
-                                text_focus |= ui.add(egui::TextEdit::singleline(password).hint_text("Password").password(true)).has_focus();
+                                text_focus |= ui.add(crate::gui::TextEdit::singleline(url).hint_text("https://music.example.org")).has_focus();
+                                text_focus |= ui.add(crate::gui::TextEdit::singleline(user).hint_text("Username")).has_focus();
+                                text_focus |= ui.add(crate::gui::TextEdit::singleline(password).hint_text("Password").password(true)).has_focus();
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     submit = ui.button("CONNECT").clicked();
@@ -2835,7 +2829,7 @@ impl NiruampApp {
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     submit = ui
-                                        .add_enabled(!self.spotify_local_authorizing, egui::Button::new("AUTHORIZE LOCAL PLAYBACK"))
+                                        .add_enabled(!self.spotify_local_authorizing, crate::gui::Button::new("AUTHORIZE LOCAL PLAYBACK"))
                                         .clicked();
                                     close = ui.button("CLOSE").clicked();
                                 });
@@ -2843,8 +2837,8 @@ impl NiruampApp {
                             Modal::AddRadio { name, url } => {
                                 ui.label(RichText::new("ADD CUSTOM RADIO").strong().color(p.foreground));
                                 ui.add_space(6.0);
-                                text_focus |= ui.add(egui::TextEdit::singleline(name).hint_text("Station name")).has_focus();
-                                text_focus |= ui.add(egui::TextEdit::singleline(url).hint_text("https://stream.example.org/live.mp3")).has_focus();
+                                text_focus |= ui.add(crate::gui::TextEdit::singleline(name).hint_text("Station name")).has_focus();
+                                text_focus |= ui.add(crate::gui::TextEdit::singleline(url).hint_text("https://stream.example.org/live.mp3")).has_focus();
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     submit = ui.button("ADD STATION").clicked();
@@ -2855,6 +2849,17 @@ impl NiruampApp {
                     });
             });
         self.text_input_active = text_focus;
+        // Enter in a one-field dialog (playlist name) submits it.
+        let had_field_focus = ctx.memory(|m| m.focus_at_start.is_some());
+        if had_field_focus
+            && ctx.input(|i| i.key_pressed(Key::Enter))
+            && matches!(
+                modal,
+                Modal::NewPlaylist { .. } | Modal::SaveQueue { .. } | Modal::RenamePlaylist { .. }
+            )
+        {
+            submit = true;
+        }
         if close {
             if matches!(modal, Modal::NewPlaylist { .. }) {
                 self.pending_new_playlist_tracks.clear();
@@ -3046,41 +3051,16 @@ impl NiruampApp {
             .unwrap_or(true);
         if due {
             eprintln!("niruamp: requesting screenshot to {}", path.display());
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
-        }
-        let shot = ctx.input(|i| {
-            i.events.iter().find_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
-        if let Some(image) = shot {
-            eprintln!(
-                "niruamp: screenshot event {}x{}",
-                image.size[0], image.size[1]
-            );
-            let [w, h] = image.size;
-            let mut rgba = Vec::with_capacity(w * h * 4);
-            for pixel in &image.pixels {
-                rgba.extend_from_slice(&[pixel.r(), pixel.g(), pixel.b(), pixel.a()]);
-            }
-            if let Some(buffer) = image::RgbaImage::from_raw(w as u32, h as u32, rgba) {
-                if let Err(e) = buffer.save(&path) {
-                    eprintln!("niruamp: screenshot save failed: {e}");
-                    self.toast(format!("Cannot save screenshot: {e}"), true);
-                } else {
-                    eprintln!("niruamp: screenshot saved {}", path.display());
-                    self.toast(format!("Screenshot saved to {}", path.display()), false);
-                }
-            }
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::Screenshot(path.clone()));
+            self.toast(format!("Screenshot saved to {}", path.display()), false);
             self.screenshot_path = None;
         }
     }
 }
 
-impl eframe::App for NiruampApp {
-    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
-        self.probe_visibility(ctx, frame);
+impl NiruampApp {
+    pub fn update(&mut self, ctx: &Context) {
+        self.probe_visibility(ctx);
         if self.debug_fps {
             self.fps_frames += 1;
             if self.fps_start.elapsed() >= Duration::from_secs(5) {
@@ -3116,15 +3096,25 @@ impl eframe::App for NiruampApp {
         // One scheduler, one repaint request per frame.
         let inputs = self.frame_inputs(ctx);
         if let Some(wait) = crate::schedule::next_frame(&inputs) {
-            // egui subtracts its predicted frame time from every delay. With a
-            // 33 ms spectrum step that produced a burst of immediate frames
-            // (each early frame shortened the next delay to zero), so add it
-            // back: the frame lands on the deadline instead of before it.
-            // A zero delay would also mean two frames in egui; 1 ms is one.
-            let predicted = ctx.input(|i| i.predicted_dt).clamp(0.0, 0.1);
-            ctx.request_repaint_after(
-                wait.max(Duration::from_millis(1)) + Duration::from_secs_f32(predicted),
-            );
+            ctx.request_repaint_after(wait);
+        }
+        if self.tray_pending.is_some() {
+            if self.frame_count >= 2 {
+                if let Some(tx) = self.tray_pending.take() {
+                    match TrayHandle::spawn(tx, self.wake.clone(), &self.theme.palette) {
+                        Ok(tray) => {
+                            self.tray = Some(tray);
+                            self.refresh_tray();
+                        }
+                        Err(e) => {
+                            eprintln!("niruamp: system tray unavailable: {e}");
+                            self.tray_error = Some(e);
+                        }
+                    }
+                }
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(30));
+            }
         }
         if !self.startup_sound_done {
             self.startup_sound_done = true;
@@ -3134,7 +3124,7 @@ impl eframe::App for NiruampApp {
         }
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    pub fn on_exit(&mut self) {
         if let Some(tray) = self.tray.take() {
             tray.shutdown();
         }
@@ -3150,7 +3140,7 @@ impl eframe::App for NiruampApp {
     }
 }
 
-pub(crate) fn decode_artwork(data: &str) -> Result<egui::ColorImage, String> {
+pub(crate) fn decode_artwork(data: &str) -> Result<crate::gui::ColorImage, String> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
@@ -3166,17 +3156,10 @@ pub(crate) fn decode_artwork(data: &str) -> Result<egui::ColorImage, String> {
         image
     };
     let rgba = image.to_rgba8();
-    Ok(egui::ColorImage::from_rgba_unmultiplied(
+    Ok(crate::gui::ColorImage::from_rgba_unmultiplied(
         [rgba.width() as usize, rgba.height() as usize],
         rgba.as_raw(),
     ))
-}
-
-/// Wake for messages from NPLAY. `request_repaint()` (a zero delay) makes egui
-/// draw two frames per request; a 1 ms delay draws one. With 30 pushed
-/// spectrum frames per second that is the difference between 60 and 30 fps.
-pub(crate) fn backend_wake(ctx: Context) -> Arc<dyn Fn() + Send + Sync> {
-    Arc::new(move || ctx.request_repaint_after(Duration::from_millis(1)))
 }
 
 /// Ease `shown` toward `target` (fast attack, slower release). Returns true
@@ -3234,7 +3217,7 @@ mod tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
         let decoded = decode_artwork(&encoded).unwrap();
         assert_eq!(decoded.size, [8, 6]);
-        assert_eq!(decoded.pixels.len(), 48);
+        assert_eq!(decoded.pixel_count(), 48);
     }
 
     #[test]

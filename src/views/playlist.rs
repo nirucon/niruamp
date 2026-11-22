@@ -1,8 +1,8 @@
 //! Playlist, queue and shared dense track rows.
 use crate::app::{ExpandAction, NiruampApp, Tab};
+use crate::gui::{pos2, vec2, Align2, Context, FontId, Id, Rect, RichText, Sense, Stroke, Ui};
 use crate::model::Track;
 use crate::views::common::*;
-use egui::{pos2, vec2, Align2, Context, FontId, Id, Rect, RichText, Sense, Stroke, Ui};
 
 pub(crate) enum RowAction {
     Play,
@@ -49,16 +49,16 @@ pub(crate) fn track_row(
             focusable: false,
         },
     );
-    let painter = ui.painter();
+    let painter = &ui.painter();
     if selected {
-        painter.rect_filled(rect, egui::Rounding::ZERO, p.selected);
+        painter.rect_filled(rect, crate::gui::Rounding::ZERO, p.selected);
         painter.rect_filled(
             Rect::from_min_max(rect.left_top(), pos2(rect.left() + 3.0, rect.bottom())),
-            egui::Rounding::ZERO,
+            crate::gui::Rounding::ZERO,
             p.accent,
         );
     } else if response.hovered() {
-        painter.rect_filled(rect, egui::Rounding::ZERO, p.surface_hi);
+        painter.rect_filled(rect, crate::gui::Rounding::ZERO, p.surface_hi);
     }
     painter.line_segment(
         [
@@ -257,11 +257,11 @@ impl NiruampApp {
         let scale = self.prefs.scale;
         let s = move |v: f32| v * scale;
         let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
-        let painter = ui.painter();
-        painter.rect_filled(rect, egui::Rounding::same(3.0), p.panel);
+        let painter = &ui.painter();
+        painter.rect_filled(rect, crate::gui::Rounding::same(3.0), p.panel);
         painter.rect_stroke(
             rect,
-            egui::Rounding::same(3.0),
+            crate::gui::Rounding::same(3.0),
             Stroke::new(1.0_f32, p.border),
         );
         painter.line_segment(
@@ -284,7 +284,11 @@ impl NiruampApp {
             ],
             Stroke::new(1.0_f32, p.border),
         );
-        let mut child = ui.child_ui(body, egui::Layout::top_down(egui::Align::Min), None);
+        let mut child = ui.child_ui(
+            body,
+            crate::gui::Layout::top_down(crate::gui::Align::Min),
+            None,
+        );
         child.set_clip_rect(body);
         match self.tab {
             Tab::Playlist => self.playlist_body(&mut child, ctx, false),
@@ -335,12 +339,12 @@ impl NiruampApp {
             let w = s(13.0) + label.chars().count() as f32 * s(6.3);
             let r = Rect::from_min_size(pos2(x, rect.top()), vec2(w, rect.height()));
             let resp = ui.interact(r, Id::new(("panel-tab", tab.key())), Sense::click());
-            resp.draw_focus(ui.painter(), r, &p);
+            resp.draw_focus(&ui.painter(), r, &p);
             let active = self.tab == tab;
             if active {
                 ui.painter().rect_filled(
                     Rect::from_min_max(pos2(r.left(), r.bottom() - s(2.0)), r.right_bottom()),
-                    egui::Rounding::ZERO,
+                    crate::gui::Rounding::ZERO,
                     p.accent,
                 );
             }
@@ -505,7 +509,11 @@ impl NiruampApp {
             pos2(ui.cursor().min.x, header.bottom() + s(3.0)),
             ui.max_rect().max,
         );
-        let mut list_ui = ui.child_ui(list_rect, egui::Layout::top_down(egui::Align::Min), None);
+        let mut list_ui = ui.child_ui(
+            list_rect,
+            crate::gui::Layout::top_down(crate::gui::Align::Min),
+            None,
+        );
         if tracks.is_empty() {
             list_ui.add_space(s(20.0));
             list_ui.label(
@@ -520,7 +528,7 @@ impl NiruampApp {
             return;
         }
         let row_h = s(22.0);
-        egui::ScrollArea::vertical()
+        crate::gui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(&mut list_ui, row_h, tracks.len(), |ui, range| {
                 for i in range {
@@ -552,8 +560,8 @@ impl NiruampApp {
                             let y = outcome.rect.top();
                             ui.painter().line_segment(
                                 [
-                                    egui::pos2(outcome.rect.left(), y),
-                                    egui::pos2(outcome.rect.right(), y),
+                                    crate::gui::pos2(outcome.rect.left(), y),
+                                    crate::gui::pos2(outcome.rect.right(), y),
                                 ],
                                 Stroke::new(2.0_f32, p.accent),
                             );
@@ -567,7 +575,7 @@ impl NiruampApp {
                         }
                     }
                     if self.keyboard_nav && i == selected {
-                        ui.scroll_to_rect(outcome.rect, Some(egui::Align::Center));
+                        ui.scroll_to_rect(outcome.rect, Some(crate::gui::Align::Center));
                     }
                     if let Some(action) = outcome.action {
                         self.apply_row_action(action, &tracks, i, queue, ctx);
@@ -578,7 +586,7 @@ impl NiruampApp {
             if ctx.input(|i| i.pointer.any_released()) {
                 self.queue_drag = None;
             } else {
-                ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                ctx.set_cursor_icon(crate::gui::CursorIcon::Grabbing);
             }
         }
         self.keyboard_nav = false;
@@ -696,7 +704,7 @@ fn small_button(ui: &mut Ui, rect: Rect, label: &str, p: &crate::theme::Palette)
     } else {
         p.surface
     };
-    bevel_rect(ui.painter(), rect, fill, p);
+    bevel_rect(&ui.painter(), rect, fill, p);
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,

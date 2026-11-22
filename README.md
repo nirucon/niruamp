@@ -23,8 +23,11 @@ providers, library, statistics, notifications and MPRIS; NIRUAMP talks to
 NPLAY's local control service over a private Unix socket. NPLAY remains a
 complete standalone terminal player with or without NIRUAMP and NIRUX.
 
-It runs on X11 in the NIRUX session (NIRUWM) and natively on Wayland, for
-example on Omarchy/Hyprland.
+NIRUAMP is a small X11 program: it runs in the NIRUX session (NIRUWM) and,
+through XWayland, on Wayland desktops such as Omarchy/Hyprland. Since 0.6 it
+draws with its own software canvas (x11rb, tiny-skia, MIT-SHM) instead of
+egui and OpenGL: about 8 MB of memory instead of 120 MB, a first frame in
+about 15 ms, and no CPU at all while nothing changes.
 
 ## Features
 
@@ -48,20 +51,21 @@ example on Omarchy/Hyprland.
   menu, middle-click play/pause, scroll for volume.
 - Theme **Auto**: follows NIRUX in the NIRUX session and Omarchy elsewhere,
   live; NIRUAMP Classic as the standalone fallback.
-- Frugal: one frame scheduler, no repaint while hidden, no polling threads;
-  measured in [docs/VALIDATION.md](docs/VALIDATION.md).
+- Frugal: one frame scheduler, only the changed part of the window is
+  redrawn, nothing at all while idle or hidden, no polling threads; measured
+  below and in [docs/VALIDATION.md](docs/VALIDATION.md).
 - Optional Winamp-inspired startup sound (embedded, can be disabled).
 
 ## Requirements
 
-- Linux, x86_64, X11 or Wayland. Verified live on Debian 13 with NIRUX and on
-  Omarchy 4 (Hyprland).
+- Linux, x86_64, an X11 display (XWayland on Wayland desktops). Verified on
+  Debian 13 with NIRUX; Omarchy 4 (Hyprland) through XWayland.
 - **NPLAY 1.7.3 or newer** with its prerequisites (`mpv`, Python 3).
   NPLAY 1.8.0+ is recommended (visualization stream instead of polling, about
   a third of NPLAY's CPU), and 1.8.1+ adds **Settings → Sources → Spotify →
   AUTHORIZE LOCAL**.
-- The prebuilt binary needs glibc 2.35+ (Debian 12+) and `libxkbcommon-x11`,
-  `libx11`, `libgl`/`libegl` at runtime. Building from source needs Rust 1.85+.
+- The prebuilt binary is static (musl): no glibc version, GL, EGL or
+  xkbcommon libraries are needed. Building from source needs Rust 1.85+.
 - Optional: `cava` (visualization), `yt-dlp`, `librespot`, Navidrome
   credentials, Spotify Premium, a StatusNotifierItem tray host.
 
@@ -94,17 +98,17 @@ The installer refuses to continue when NPLAY is missing or older than 1.7.3
 (`NIRUAMP_SKIP_NPLAY_CHECK=1` skips that, for packaging experiments only). It
 downloads the published x86_64 release binary when possible and builds with
 cargo otherwise, then installs `~/.local/bin/niruamp`, a desktop entry and an
-icon.
+icon. The downloaded binary is checked against the release's `SHA256SUMS`.
 
 ```sh
-./install.sh --prebuilt  # force the published binary
-./install.sh --source    # always build with cargo
+./install.sh --prebuilt  # only the published, verified binary
+./install.sh --source    # always build with cargo (also --build)
 ```
 
-Manual install from the release archive:
+Manual install of the release binary:
 
 ```sh
-tar -xzf niruamp-0.5.2-x86_64-linux-gnu.tar.gz
+sha256sum -c --ignore-missing SHA256SUMS
 install -m755 niruamp ~/.local/bin/niruamp
 ```
 
@@ -113,7 +117,8 @@ On Omarchy/Arch the steps are the same; see [docs/WAYLAND.md](docs/WAYLAND.md).
 ## Usage
 
 ```sh
-niruamp            # start, or activate the running window
+niruamp                  # start, or activate the running window
+niruamp --class NAME     # another WM_CLASS (default: niruamp)
 niruamp --version
 niruamp --help
 ```
@@ -172,11 +177,13 @@ Environment variables:
 
 | Variable | Effect |
 |---|---|
-| `NIRUAMP_BACKEND=x11` / `wayland` | Force XWayland or native Wayland (default: Wayland when `WAYLAND_DISPLAY` is set outside the NIRUX session) |
 | `NPLAY_SERVICE_SOCKET=PATH` | Connect to an existing NPLAY control socket |
 | `NPLAY_DEV_PATH=/path/to/nplay` | Use an NPLAY source checkout instead of the installed one |
 | `NIRUAMP_SKIP_STARTUP_SOUND` | Skip the startup sound (any value) |
 | `NIRUAMP_DEBUG_FPS` | Print frames/s and NPLAY messages/s every 5 s |
+| `NIRUAMP_TIMING` | Print the time to the first frame |
+| `NIRUAMP_SCREENSHOT=PATH` | Save a PNG of the window (`NIRUAMP_SCREENSHOT_DELAY` seconds after start) |
+| `NIRUAMP_NO_SHM` | Present with `PutImage` instead of MIT-SHM |
 
 ## Files and paths
 
@@ -200,8 +207,9 @@ never reads or displays them.
   capture from your audio setup; live radio and YouTube depend on that too.
 - **No tray icon.** Tray support needs a StatusNotifierItem host; without one,
   minimize gives a normal minimized window.
-- **Position or always-on-top is not kept on Wayland.** Only Hyprland is
-  supported for that; other compositors decide placement themselves.
+- **Position or always-on-top is not kept on a Wayland desktop.** NIRUAMP
+  runs through XWayland there; Hyprland is asked directly (floating rule,
+  pin, tray workspace), other compositors decide placement themselves.
   Details in [docs/WAYLAND.md](docs/WAYLAND.md).
 
 Known limits:
@@ -210,6 +218,22 @@ Known limits:
   mpv), and no `.wsz` skins.
 - Live radio cannot seek; some source-specific operations are backend limits
   and show as disabled.
+
+## Performance
+
+Measured on othala in a private Xvfb with a sandboxed NPLAY 1.8.2 (fake mpv
+and CAVA harness, 30 fps spectrum), `tests/xvfb.sh` and a sampling script:
+
+| | 0.5.2 (egui, OpenGL) | 0.6.0 (x11rb canvas) |
+|---|---|---|
+| Window shown after start | 118 ms | 28 ms (first frame 13 to 17 ms) |
+| Memory (RSS) | 120 MB | 8 MB |
+| Threads | 33 | 6 (8 with the tray) |
+| CPU, stopped or paused without spectrum | 0 % | 0 % |
+| CPU, playing with the spectrum | 305 % (llvmpipe in Xvfb) | 2 to 3 % |
+| CPU, window on another workspace | 0 % | 0 % |
+
+On real hardware 0.5.2 measured 124 MB, about 85 MB of it GL mappings.
 
 ## Uninstall
 
@@ -229,16 +253,21 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo build --release --locked
+sh tests/xvfb.sh target/release/niruamp   # end-to-end in a private Xvfb (needs NPLAY)
 ```
 
 NPLAY's service and regression tests live in the NPLAY repository
 (`python3 -m unittest discover -s tests -v`). Layout:
 
+- `src/main.rs`, `src/shell.rs`: start-up and the event loop (X events, an
+  eventfd for worker threads and the frame deadline in one `poll`)
+- `src/x.rs`: the X11 window, EWMH requests, clipboard, file drops, MIT-SHM
+- `src/gui/`: the canvas GUI (layout, widgets, text, damage-tracked painting)
 - `src/app.rs`: application state, commands, lifecycle, keyboard, layout
 - `src/protocol.rs`: JSON-RPC client, framing, reconnect-safe event stream
 - `src/platform.rs`: backend discovery/spawn, ownership, single instance
 - `src/theme.rs`: NIRUX and Omarchy appearance, watcher
-- `src/hyprland.rs`, `src/omarchy.rs`: Wayland/Hyprland and Omarchy integration
+- `src/hyprland.rs`, `src/omarchy.rs`: Hyprland and Omarchy integration
 - `src/views/`: deck, playlist/queue, browser, settings, immersive mode
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PROTOCOL.md](docs/PROTOCOL.md),
@@ -248,7 +277,7 @@ CPU/RSS measurements). Release history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Status, disclaimer and how it's made
 
-**Status: alpha.** It installs, runs and is integrated on NIRUX (X11) and on Omarchy/Hyprland (Wayland), but it is young: live playback with real accounts and providers has been tested less than the automated harness, and some features (EQ, skins) are deliberately missing.
+**Status: alpha.** It installs, runs and is integrated on NIRUX (X11) and on Omarchy/Hyprland (through XWayland), but it is young: live playback with real accounts and providers has been tested less than the automated harness, and some features (EQ, skins) are deliberately missing.
 
 NIRUX and every niru* project are made by me, Nicklas Rudolfsson
 ([@nirucon](https://github.com/nirucon)), for me. They are tailored to my own

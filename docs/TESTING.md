@@ -38,6 +38,20 @@ redaction, invalid/oversized frames, socket/directory permissions, second
 service behaviour, graceful shutdown, idle exit, and local playback through the
 real NPLAY `Player` code with a deterministic mpv IPC harness.
 
+## End-to-end test (0.6)
+
+```sh
+sh tests/xvfb.sh target/release/niruamp [NPLAY-COMMAND]
+```
+
+Starts a private Xvfb (display `NIRUAMP_TEST_DISPLAY`, default 64), a
+sandboxed NPLAY service with offline sources only, `tools/fake-mpv` and
+`tools/fake-cava`, and checks: first frame under 1 s, memory under 20 MB, no
+idle CPU, Space/N/+/- through NPLAY's state, right-click → Add to queue,
+Delete in the queue, windowshade height, search and Enter, a settings check
+box saved to `config.toml`, dragging the title strip, no CPU while unmapped,
+and the close button. CI runs it against NPLAY 1.8.2 from source.
+
 ## Deterministic transport harness
 
 `tools/fake-mpv` implements the subset of mpv JSON IPC NPLAY uses. It does not
@@ -129,7 +143,7 @@ NIRUAMP_SCREENSHOT=/tmp/niruamp.png NIRUAMP_SCREENSHOT_DELAY=3 \
 ```
 
 `NIRUAMP_SCREENSHOT_DELAY` is a development aid; the screenshot request is
-processed by egui's viewport screenshot API and saved as PNG.
+saved as PNG from the canvas.
 
 ## Lifecycle matrix
 

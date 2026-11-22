@@ -4,8 +4,9 @@ Details behind the short summary in the [README](../README.md).
 
 ## Install on Omarchy
 
-NIRUAMP 0.5 runs natively on Wayland and follows the Omarchy theme. Install on
-Omarchy (Arch) like anywhere else; NPLAY comes first:
+NIRUAMP follows the Omarchy theme. Since 0.6 it is an X11 program and runs
+through XWayland (Omarchy and Hyprland ship it). Install on Omarchy (Arch)
+like anywhere else; NPLAY comes first:
 
 ```sh
 git clone https://github.com/nirucon/nplay.git && (cd nplay && ./install.sh)
@@ -13,16 +14,16 @@ git clone https://github.com/nirucon/niruamp.git && (cd niruamp && ./install.sh)
 niruamp
 ```
 
-Omarchy already ships the runtime libraries (`wayland`, `libxkbcommon`, Mesa)
-and `cava`. On other Arch systems: `sudo pacman -S wayland libxkbcommon
-libxkbcommon-x11 mesa`.
+The prebuilt binary is static and needs no extra libraries; `cava` is
+optional for the spectrum.
 
 ## What NIRUAMP does on Wayland
 
-- **Backend.** Native Wayland whenever `WAYLAND_DISPLAY` is set outside the NIRU
-  session, so scaling (including fractional scales such as 1.25) stays crisp.
-  `NIRUAMP_BACKEND=x11` forces XWayland, `NIRUAMP_BACKEND=wayland` forces
-  Wayland. The NIRU session always uses X11, as before.
+- **Backend.** X11 everywhere: XWayland on a Wayland desktop. (0.5 had a
+  native Wayland backend through winit and OpenGL; 0.6 replaced that stack
+  with a software canvas of about 8 MB, so `NIRUAMP_BACKEND` is gone. Under
+  fractional scaling XWayland may scale the window.) The NIRU session uses
+  X11, as before.
 - **Theme.** With **Theme → Auto** NIRUAMP follows the current Omarchy theme and
   switches live with `omarchy-theme-set`. It reads the theme's `colors.toml`
   (Omarchy 3.4+; `~/.local/state/omarchy/current/theme` in Omarchy 4,
@@ -32,8 +33,8 @@ libxkbcommon-x11 mesa`.
   the secondary text (lifted to at least 4:1 contrast when a theme makes it too
   faint). Light themes work like NIRUX's light themes. **Omarchy · current
   theme** and **NIRUX · current theme** pin one source.
-- **Hyprland.** Wayland lets only the compositor place and stack windows, so
-  NIRUAMP talks to Hyprland over its IPC socket. Before the window opens it
+- **Hyprland.** Only the compositor places and stacks windows, so NIRUAMP
+  talks to Hyprland over its IPC socket (also through XWayland). Before the window opens it
   registers an in-memory window rule (gone after a Hyprland reload, registered
   again at the next start) so NIRUAMP opens floating at its saved size and
   position, without flashing tiled first. **Always on top** pins the window

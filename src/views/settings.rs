@@ -1,9 +1,9 @@
 //! Settings, source configuration and honest product information.
 use crate::app::{Modal, NiruampApp, PendingKind};
 use crate::config;
+use crate::gui::{pos2, vec2, Align2, Context, FontId, Frame, RichText, Sense, Stroke, Ui};
 use crate::theme;
 use crate::views::common::*;
-use egui::{pos2, vec2, Align2, Context, FontId, Frame, RichText, Sense, Stroke, Ui};
 use serde_json::{json, Value};
 
 impl NiruampApp {
@@ -25,7 +25,7 @@ impl NiruampApp {
                 self.load_settings();
             }
         }
-        egui::ScrollArea::vertical()
+        crate::gui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(s(2.0));
@@ -56,7 +56,7 @@ impl NiruampApp {
         Frame::none()
             .fill(p.surface)
             .stroke(Stroke::new(1.0_f32, p.border))
-            .inner_margin(egui::Margin::same(10.0))
+            .inner_margin(crate::gui::Margin::same(10.0))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.label(RichText::new(title).size(s(9.0)).strong().color(p.accent));
@@ -109,7 +109,7 @@ impl NiruampApp {
                 } else {
                     "Auto · follow NIRUX"
                 };
-                egui::ComboBox::from_id_salt("theme-select")
+                crate::gui::ComboBox::from_id_salt("theme-select")
                     .selected_text(match selected.as_str() {
                         "auto" => auto_label.to_string(),
                         "classic" => "NIRUAMP Classic".to_string(),
@@ -161,7 +161,7 @@ impl NiruampApp {
                 ui.label(RichText::new("Scale").size(s(11.0)).color(p.foreground));
                 let mut scale = self.prefs.scale;
                 let resp = ui.add(
-                    egui::Slider::new(&mut scale, 0.75..=1.6)
+                    crate::gui::Slider::new(&mut scale, 0.75..=1.6)
                         .step_by(0.05)
                         .fixed_decimals(2),
                 );
@@ -180,11 +180,14 @@ impl NiruampApp {
                 let mut top = self.prefs.always_on_top;
                 // Wayland leaves stacking to the compositor; NIRUAMP can ask
                 // Hyprland (pin), not other compositors.
-                let stacking = self.hypr.is_some()
-                    || crate::session::backend() == crate::session::Backend::X11;
+                // X11 (and XWayland) can always ask for stacking.
+                let stacking = true;
                 let resp = ui.add_enabled(
                     stacking,
-                    egui::Checkbox::new(&mut top, RichText::new("Always on top").size(s(11.0))),
+                    crate::gui::Checkbox::new(
+                        &mut top,
+                        RichText::new("Always on top").size(s(11.0)),
+                    ),
                 );
                 let resp = if stacking {
                     resp
@@ -240,7 +243,7 @@ impl NiruampApp {
                     Some(false) => "normal",
                     None => "follow",
                 };
-                egui::ComboBox::from_id_salt("motion-select")
+                crate::gui::ComboBox::from_id_salt("motion-select")
                     .selected_text(match current {
                         "reduced" => "Reduced",
                         "normal" => "Normal",
@@ -329,7 +332,7 @@ impl NiruampApp {
                         .color(p.foreground),
                 );
                 let mut fps = self.prefs.visualization_fps;
-                egui::ComboBox::from_id_salt("vis-fps-select")
+                crate::gui::ComboBox::from_id_salt("vis-fps-select")
                     .selected_text(format!("{fps} fps"))
                     .show_ui(ui, |ui| {
                         for choice in config::VIS_FPS_CHOICES {
@@ -436,7 +439,7 @@ impl NiruampApp {
                 "AUTHORIZE LOCAL"
             };
             let button = ui
-                .add_enabled(!authorizing, egui::Button::new(label).small())
+                .add_enabled(!authorizing, crate::gui::Button::new(label).small())
                 .on_hover_text(
                     "NPLAY opens Spotify's sign-in page for its local librespot receiver. Needed once; librespot keeps the credentials.",
                 );
@@ -538,7 +541,7 @@ impl NiruampApp {
                     .and_then(Value::as_str)
                     .unwrap_or("local")
                     .to_string();
-                egui::ComboBox::from_id_salt("preferred-source")
+                crate::gui::ComboBox::from_id_salt("preferred-source")
                     .selected_text(current.to_uppercase())
                     .show_ui(ui, |ui| {
                         for option in ["local", "navidrome", "spotify", "youtube"] {
@@ -668,7 +671,7 @@ impl NiruampApp {
                 ui.horizontal(|ui| {
                     ui.add_sized(
                         [s(100.0), s(14.0)],
-                        egui::Label::new(RichText::new(key).size(s(9.0)).color(p.muted)),
+                        crate::gui::Label::new(RichText::new(key).size(s(9.0)).color(p.muted)),
                     );
                     ui.label(RichText::new(value).size(s(9.0)).color(p.foreground));
                 });
@@ -696,7 +699,7 @@ impl NiruampApp {
         ui.add_space(s(2.0));
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(s(46.0), s(46.0)), Sense::hover());
-            logo(ui.painter(), rect, &p);
+            logo(&ui.painter(), rect, &p);
             ui.vertical(|ui| {
                 ui.label(
                     RichText::new("NIRUAMP")
@@ -750,7 +753,7 @@ impl NiruampApp {
                 ui.horizontal(|ui| {
                     ui.add_sized(
                         [s(80.0), s(14.0)],
-                        egui::Label::new(
+                        crate::gui::Label::new(
                             RichText::new(key).monospace().size(s(9.0)).color(p.accent),
                         ),
                     );

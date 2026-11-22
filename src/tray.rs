@@ -4,8 +4,8 @@
 //! best-effort: a missing D-Bus session or watcher must never prevent NIRUAMP
 //! from running. All menu actions are forwarded to the GUI thread over a small
 //! bounded command channel.
+use crate::shell::Wake;
 use crate::theme::Palette;
-use egui::Context;
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Icon, ToolTip};
@@ -23,7 +23,7 @@ pub enum TrayCommand {
 
 pub struct TrayHandler {
     tx: Sender<TrayCommand>,
-    ctx: Context,
+    ctx: Wake,
     title: String,
     detail: String,
     playing: bool,
@@ -33,7 +33,7 @@ pub struct TrayHandler {
 impl TrayHandler {
     fn send(&self, command: TrayCommand) {
         let _ = self.tx.send(command);
-        self.ctx.request_repaint();
+        (self.ctx)();
     }
 }
 
@@ -138,7 +138,7 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    pub fn spawn(tx: Sender<TrayCommand>, ctx: Context, palette: &Palette) -> Result<Self, String> {
+    pub fn spawn(tx: Sender<TrayCommand>, ctx: Wake, palette: &Palette) -> Result<Self, String> {
         let icon = tray_icon(palette);
         let handler = TrayHandler {
             tx,
@@ -191,7 +191,7 @@ impl TrayHandle {
 fn tray_icon(palette: &Palette) -> Icon {
     let size = 64usize;
     let mut data = vec![0u8; size * size * 4];
-    let mut put = |x: usize, y: usize, c: egui::Color32| {
+    let mut put = |x: usize, y: usize, c: crate::gui::Color32| {
         let i = (y * size + x) * 4;
         data[i] = c.a();
         data[i + 1] = c.r();

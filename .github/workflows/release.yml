@@ -1,61 +1,56 @@
 name: release
 
-# A pushed tag vX.Y.Z builds the prebuilt x86_64 binary that install.sh
-# downloads and publishes it with its SHA256SUMS file. Ubuntu 22.04 has glibc
-# 2.35, so the binary runs on Debian 12+ (glibc 2.36) and newer distributions.
+# A pushed tag vX.Y.Z builds the static x86_64 musl binary that install.sh
+# downloads and publishes it with its SHA256SUMS file.
 
 on:
   push:
     tags: ["v*"]
-  # Dry run on a branch: build and package, upload as a workflow artifact,
-  # publish nothing.
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85
-      - name: System build dependencies
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Build dependencies and X11 test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libx11-dev \
-            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libgl1-mesa-dev
+          sudo apt-get install -y musl-tools xvfb xdotool x11-utils python3 python3-mutagen
       - name: Check the tag matches Cargo.toml
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then test "v$version" = "$GITHUB_REF_NAME"; fi
+          test "v$version" = "$GITHUB_REF_NAME"
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Test
-        run: cargo test --locked
-      - name: Build
-        run: cargo build --release --locked
+        run: cargo test --locked -- --test-threads=1
+      - name: Build a static binary
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Verify identity, static linking and the GUI
+        run: |
+          B=target/x86_64-unknown-linux-musl/release/niruamp
+          $B --version | grep -qx "NIRUAMP $VERSION"
+          if ldd $B 2>&1 | grep -q '=>'; then echo "::error::niruamp is dynamically linked"; exit 1; fi
+          git clone --quiet --depth 1 --branch v1.8.2 https://github.com/nirucon/nplay "$RUNNER_TEMP/nplay"
+          printf '#!/bin/sh\nPYTHONPATH=%s exec python3 -m nplay.app "$@"\n' "$RUNNER_TEMP/nplay" > "$RUNNER_TEMP/nplay-run"
+          chmod +x "$RUNNER_TEMP/nplay-run"
+          NIRUAMP_TEST_DISPLAY=99 sh tests/xvfb.sh $B "$RUNNER_TEMP/nplay-run"
       - name: Package
         run: |
-          mkdir -p dist/pkg
-          install -m 0755 target/release/niruamp dist/pkg/niruamp
-          ./dist/pkg/niruamp --version | grep -qx "NIRUAMP $VERSION"
-          objdump -T dist/pkg/niruamp | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
-          tar --owner=0 --group=0 --numeric-owner -C dist/pkg \
-            -czf "dist/niruamp-$VERSION-x86_64-linux-gnu.tar.gz" niruamp
-          sha256sum "dist/niruamp-$VERSION-x86_64-linux-gnu.tar.gz" > "dist/SHA256SUMS-$VERSION"
-          cat "dist/SHA256SUMS-$VERSION"
-      - name: Keep the dry-run package
-        if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v4
-        with:
-          name: niruamp-dry-run
-          path: dist/*
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/niruamp dist/niruamp
+          tar --owner=0 --group=0 --numeric-owner -C dist \
+            -czf "dist/niruamp-$VERSION-x86_64-linux-musl.tar.gz" niruamp
+          cd dist && sha256sum niruamp "niruamp-$VERSION-x86_64-linux-musl.tar.gz" > SHA256SUMS && cat SHA256SUMS
       - name: Publish
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes="$(awk -v h="# NIRUAMP $VERSION" '$0==h{f=1;next} /^# NIRUAMP /{f=0} f' CHANGELOG.md)"
           gh release create "$GITHUB_REF_NAME" --title "NIRUAMP $VERSION" --notes "$notes" \
-            "dist/niruamp-$VERSION-x86_64-linux-gnu.tar.gz" "dist/SHA256SUMS-$VERSION"
+            dist/niruamp "dist/niruamp-$VERSION-x86_64-linux-musl.tar.gz" dist/SHA256SUMS

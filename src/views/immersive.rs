@@ -5,16 +5,16 @@
 //! still belongs to the active suite theme without painting a panel.
 
 use crate::app::NiruampApp;
+use crate::gui::{pos2, vec2, Align2, Color32, Context, FontId, Rect, Stroke};
 use crate::views::common::fmt_time;
-use egui::{pos2, vec2, Align2, Color32, Context, FontId, Rect, Stroke};
 
 impl NiruampApp {
     pub(crate) fn toggle_immersive(&mut self, ctx: &Context) {
         self.immersive = !self.immersive;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.immersive));
+        ctx.send_viewport_cmd(crate::gui::ViewportCommand::Fullscreen(self.immersive));
         if !self.immersive && self.prefs.always_on_top {
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                egui::WindowLevel::AlwaysOnTop,
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::WindowLevel(
+                crate::gui::WindowLevel::AlwaysOnTop,
             ));
         }
         ctx.request_repaint();
@@ -22,11 +22,11 @@ impl NiruampApp {
 
     pub(crate) fn draw_immersive(&mut self, ctx: &Context) {
         let palette = self.palette();
-        egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(Color32::BLACK))
+        crate::gui::CentralPanel::default()
+            .frame(crate::gui::Frame::none().fill(Color32::BLACK))
             .show(ctx, |ui| {
                 let screen = ui.max_rect();
-                let painter = ui.painter();
+                let painter = &ui.painter();
                 let scale = (screen.height() / 1000.0).clamp(0.78, 1.75);
                 let title_size = (44.0 * scale).min(screen.height() * 0.065);
                 let artist_size = (20.0 * scale).min(screen.height() * 0.032);
@@ -127,7 +127,7 @@ impl NiruampApp {
 
     fn draw_immersive_spectrum(
         &self,
-        painter: &egui::Painter,
+        painter: &crate::gui::Painter,
         rect: Rect,
         palette: &crate::theme::Palette,
     ) {

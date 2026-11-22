@@ -1,7 +1,7 @@
 //! The player deck: digital clock, artwork, spectrum and transport controls.
 use crate::app::{NiruampApp, Tab};
+use crate::gui::{pos2, vec2, Align2, Color32, Context, FontId, Id, Rect, Sense, Stroke, Ui};
 use crate::views::common::*;
-use egui::{pos2, vec2, Align2, Color32, Context, FontId, Id, Rect, Sense, Stroke, Ui};
 use std::hash::{Hash, Hasher};
 
 impl NiruampApp {
@@ -32,12 +32,12 @@ impl NiruampApp {
             + lower_h;
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(width, deck_h), Sense::hover());
-        let painter = ui.painter();
+        let painter = &ui.painter();
         let panel = rect.shrink(0.5);
-        painter.rect_filled(panel, egui::Rounding::same(3.0), p.surface);
+        painter.rect_filled(panel, crate::gui::Rounding::same(3.0), p.surface);
         painter.rect_stroke(
             panel,
-            egui::Rounding::same(3.0),
+            crate::gui::Rounding::same(3.0),
             Stroke::new(1.0_f32, p.border),
         );
         painter.line_segment(
@@ -88,7 +88,7 @@ impl NiruampApp {
         let p = self.palette();
         let scale = self.prefs.scale;
         let s = move |v: f32| v * scale;
-        let painter = ui.painter();
+        let painter = &ui.painter();
         let logo_rect = Rect::from_min_size(
             rect.left_center() + vec2(2.0, -s(8.0)),
             vec2(s(16.0), s(16.0)),
@@ -163,7 +163,7 @@ impl NiruampApp {
             );
             if resp.activated(ui) {
                 match icon {
-                    Icon::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Icon::Close => ctx.send_viewport_cmd(crate::gui::ViewportCommand::Close),
                     Icon::Minimize => self.hide_to_tray(ctx),
                     Icon::Down => self.toggle_shade(ctx),
                     Icon::Pin => self.toggle_pin(ctx),
@@ -196,7 +196,7 @@ impl NiruampApp {
         let p = self.palette();
         let scale = self.prefs.scale;
         let s = move |v: f32| v * scale;
-        inset_rect(ui.painter(), rect, p.inset, &p);
+        inset_rect(&ui.painter(), rect, p.inset, &p);
         let pad = s(6.0);
         let art_size = rect.height() - pad * 2.0;
         let art_rect = Rect::from_min_size(rect.min + vec2(pad, pad), vec2(art_size, art_size));
@@ -211,16 +211,16 @@ impl NiruampApp {
                 );
                 ui.painter().rect_stroke(
                     art_rect,
-                    egui::Rounding::same(1.0),
+                    crate::gui::Rounding::same(1.0),
                     Stroke::new(1.0_f32, p.border_hi),
                 );
             } else {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 key.hash(&mut hasher);
-                draw_art_placeholder(ui.painter(), art_rect, &p, hasher.finish(), "");
+                draw_art_placeholder(&ui.painter(), art_rect, &p, hasher.finish(), "");
             }
         } else {
-            draw_art_placeholder(ui.painter(), art_rect, &p, 3, "NIRUAMP");
+            draw_art_placeholder(&ui.painter(), art_rect, &p, 3, "NIRUAMP");
         }
         let info = Rect::from_min_max(
             pos2(art_rect.right() + pad * 1.4, rect.top() + pad),
@@ -289,7 +289,7 @@ impl NiruampApp {
             vec2(badge_w.min(info.width() * 0.58), badge_h),
         );
         ui.painter()
-            .rect_filled(badge, egui::Rounding::same(1.0), p.surface_hi);
+            .rect_filled(badge, crate::gui::Rounding::same(1.0), p.surface_hi);
         ui.painter().text(
             badge.center(),
             Align2::CENTER_CENTER,
@@ -388,16 +388,16 @@ impl NiruampApp {
         } else {
             fmt_time(position)
         };
-        inset_rect(ui.painter(), led_rect, p.background, &p);
+        inset_rect(&ui.painter(), led_rect, p.background, &p);
         seven_segment(
-            ui.painter(),
+            &ui.painter(),
             led_rect.shrink2(vec2(s(4.0), s(3.0))),
             &clock,
             p.led,
             p.led_dim,
         );
         let led_resp = ui.interact(led_rect, Id::new("deck-led"), Sense::click());
-        led_resp.draw_focus(ui.painter(), led_rect, &p);
+        led_resp.draw_focus(&ui.painter(), led_rect, &p);
         if led_resp.activated(ui) {
             self.prefs.remaining_time = !self.prefs.remaining_time;
             self.update_prefs(ui.ctx());
@@ -409,9 +409,9 @@ impl NiruampApp {
 
     fn draw_visualizer(&mut self, ui: &mut Ui, rect: Rect) {
         let p = self.palette();
-        inset_rect(ui.painter(), rect, p.background, &p);
+        inset_rect(&ui.painter(), rect, p.background, &p);
         let inner = rect.shrink2(vec2(3.0, 2.0));
-        let painter = ui.painter();
+        let painter = &ui.painter();
         for i in 1..4 {
             let y = inner.top() + inner.height() * i as f32 / 4.0;
             painter.line_segment(
@@ -479,7 +479,7 @@ impl NiruampApp {
             } else {
                 p.led_dim
             };
-            painter.rect_filled(bar, egui::Rounding::same(1.0), color);
+            painter.rect_filled(bar, crate::gui::Rounding::same(1.0), color);
             if v > 0.18 {
                 painter.line_segment(
                     [bar.left_top(), bar.right_top()],
@@ -755,7 +755,7 @@ impl NiruampApp {
         let s = move |v: f32| v * scale;
         let h = s(44.0);
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
-        let painter = ui.painter();
+        let painter = &ui.painter();
         bevel_rect(painter, rect, p.surface, &p);
         let logo_rect = Rect::from_center_size(
             rect.left_center() + vec2(s(14.0), 0.0),
@@ -821,7 +821,7 @@ impl NiruampApp {
             );
             if resp.activated(ui) {
                 match icon {
-                    Icon::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Icon::Close => ctx.send_viewport_cmd(crate::gui::ViewportCommand::Close),
                     Icon::Down => self.toggle_shade(ctx),
                     Icon::Play => self.toggle(),
                     Icon::Next => self.next(),
@@ -858,12 +858,12 @@ impl NiruampApp {
                     self.window_state.normal_height = r.height();
                 }
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::InnerSize(vec2(
                 self.window_state.normal_width.max(self.s(420.0)),
                 self.s(58.0),
             )));
         } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::InnerSize(vec2(
                 self.window_state.normal_width.max(self.s(420.0)),
                 self.window_state.normal_height.max(self.s(300.0)),
             )));
@@ -878,11 +878,11 @@ impl NiruampApp {
                 h.set_pinned(&c, self.prefs.always_on_top, self.hypr_lua);
             }
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+        ctx.send_viewport_cmd(crate::gui::ViewportCommand::WindowLevel(
             if self.prefs.always_on_top {
-                egui::WindowLevel::AlwaysOnTop
+                crate::gui::WindowLevel::AlwaysOnTop
             } else {
-                egui::WindowLevel::Normal
+                crate::gui::WindowLevel::Normal
             },
         ));
         self.update_prefs(ctx);
@@ -898,7 +898,7 @@ impl NiruampApp {
         }
         if self.prefs.window_shade {
             self.prefs.window_shade = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
+            ctx.send_viewport_cmd(crate::gui::ViewportCommand::InnerSize(vec2(
                 self.window_state.normal_width.max(self.s(420.0)),
                 self.window_state.normal_height.max(self.s(300.0)),
             )));

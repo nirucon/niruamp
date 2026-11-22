@@ -1,8 +1,8 @@
 //! Async search and source browsing.
 use crate::app::NiruampApp;
+use crate::gui::{pos2, vec2, Align2, Context, FontId, Id, Rect, RichText, Sense, Stroke, Ui};
 use crate::views::common::*;
 use crate::views::playlist::track_row;
-use egui::{pos2, vec2, Align2, Context, FontId, Frame, Id, Rect, RichText, Sense, Stroke, Ui};
 use std::time::{Duration, Instant};
 
 const SOURCES: &[(&str, &str)] = &[
@@ -92,40 +92,39 @@ impl NiruampApp {
             pos2(bx, bar.top()),
             pos2(bar.right() - s(28.0), bar.bottom()),
         );
-        Frame::none()
-            .fill(p.inset)
-            .stroke(Stroke::new(1.0_f32, p.border))
-            .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-            .show(ui, |ui| {
-                ui.allocate_ui_at_rect(search_rect, |ui| {
-                    ui.horizontal_centered(|ui| {
-                        ui.label(RichText::new("SEARCH").size(s(8.0)).color(p.muted));
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.browser.input)
-                                .hint_text("artists, albums, tracks, radio, streams")
-                                .frame(false)
-                                .desired_width(f32::INFINITY),
-                        );
-                        if self.browser.focus_search {
-                            response.request_focus();
-                            self.browser.focus_search = false;
-                        }
-                        if response.changed() {
-                            self.browser.search_due =
-                                Some(Instant::now() + Duration::from_millis(350));
-                        }
-                        let enter =
-                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if enter
-                            || (response.has_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                        {
-                            self.browser.search_due = None;
-                            self.start_search();
-                        }
-                    });
-                });
+        // The field's frame, drawn first so the back button stays visible.
+        ui.painter().rect(
+            search_rect.expand2(vec2(0.0, 0.0)),
+            0.0,
+            p.inset,
+            Stroke::new(1.0_f32, p.border),
+        );
+        ui.allocate_ui_at_rect(search_rect.shrink2(vec2(6.0, 3.0)), |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.label(RichText::new("SEARCH").size(s(8.0)).color(p.muted));
+                let response = ui.add(
+                    crate::gui::TextEdit::singleline(&mut self.browser.input)
+                        .hint_text("artists, albums, tracks, radio, streams")
+                        .frame(false)
+                        .desired_width(f32::INFINITY),
+                );
+                if self.browser.focus_search {
+                    response.request_focus();
+                    self.browser.focus_search = false;
+                }
+                if response.changed() {
+                    self.browser.search_due = Some(Instant::now() + Duration::from_millis(350));
+                }
+                let enter =
+                    response.lost_focus() && ui.input(|i| i.key_pressed(crate::gui::Key::Enter));
+                if enter
+                    || (response.has_focus() && ui.input(|i| i.key_pressed(crate::gui::Key::Enter)))
+                {
+                    self.browser.search_due = None;
+                    self.start_search();
+                }
             });
+        });
         let go_rect = Rect::from_min_size(
             pos2(bar.right() - s(26.0), bar.top() + s(2.0)),
             vec2(s(26.0), s(22.0)),
@@ -134,7 +133,11 @@ impl NiruampApp {
             self.browser.search_due = None;
             self.start_search();
         }
-        ui.add_space(search_h + s(4.0));
+        // Below the bar: the field's own allocation has already moved the
+        // cursor past the bar's inner rect.
+        let below = bar.bottom() + s(8.0);
+        let gap = (below - ui.cursor().min.y).max(0.0);
+        ui.add_space(gap);
 
         // Source selector.
         ui.horizontal_wrapped(|ui| {
@@ -267,7 +270,11 @@ impl NiruampApp {
         }
         let row_h = s(22.0);
         let scroll = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
-        let mut scroll_ui = ui.child_ui(scroll, egui::Layout::top_down(egui::Align::Min), None);
+        let mut scroll_ui = ui.child_ui(
+            scroll,
+            crate::gui::Layout::top_down(crate::gui::Align::Min),
+            None,
+        );
         if !self.browser.groups.is_empty() {
             #[derive(Clone, Copy)]
             enum SearchRow {
@@ -292,7 +299,7 @@ impl NiruampApp {
                     index += 1;
                 }
             }
-            egui::ScrollArea::vertical()
+            crate::gui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(&mut scroll_ui, row_h, rows.len(), |ui, range| {
                     for row_index in range {
@@ -370,7 +377,10 @@ impl NiruampApp {
                                     self.browser.selected = index;
                                 }
                                 if self.keyboard_nav && selected {
-                                    ui.scroll_to_rect(outcome.rect, Some(egui::Align::Center));
+                                    ui.scroll_to_rect(
+                                        outcome.rect,
+                                        Some(crate::gui::Align::Center),
+                                    );
                                 }
                                 if let Some(action) = outcome.action {
                                     self.apply_row_action(action, &group.items, item, false, ctx);
@@ -382,7 +392,7 @@ impl NiruampApp {
         } else {
             let tracks = self.browser.items.clone();
             let total = tracks.len();
-            egui::ScrollArea::vertical()
+            crate::gui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_rows(&mut scroll_ui, row_h, total, |ui, range| {
                     for i in range {
@@ -404,7 +414,7 @@ impl NiruampApp {
                             self.browser.selected = i;
                         }
                         if self.keyboard_nav && selected {
-                            ui.scroll_to_rect(outcome.rect, Some(egui::Align::Center));
+                            ui.scroll_to_rect(outcome.rect, Some(crate::gui::Align::Center));
                         }
                         if let Some(action) = outcome.action {
                             self.apply_row_action(action, &tracks, i, false, ctx);
@@ -523,7 +533,7 @@ impl NiruampApp {
                 } else {
                     p.surface
                 };
-                bevel_rect(ui.painter(), rect, fill, &p);
+                bevel_rect(&ui.painter(), rect, fill, &p);
                 ui.painter().text(
                     rect.left_top() + vec2(s(7.0), s(7.0)),
                     Align2::LEFT_TOP,
@@ -538,7 +548,7 @@ impl NiruampApp {
                     FontId::proportional(s(8.0)),
                     p.muted,
                 );
-                resp.draw_focus(ui.painter(), rect, &p);
+                resp.draw_focus(&ui.painter(), rect, &p);
                 if resp.activated(ui) {
                     clicked = Some((source, section));
                 }
@@ -569,9 +579,9 @@ fn small_icon(ui: &mut Ui, rect: Rect, icon: Icon, tip: &str, p: &crate::theme::
     } else {
         p.inset
     };
-    bevel_rect(ui.painter(), rect, fill, p);
+    bevel_rect(&ui.painter(), rect, fill, p);
     draw_icon(
-        ui.painter(),
+        &ui.painter(),
         icon,
         rect.shrink(rect.height() * 0.24),
         if resp.hovered() {
@@ -580,7 +590,7 @@ fn small_icon(ui: &mut Ui, rect: Rect, icon: Icon, tip: &str, p: &crate::theme::
             p.muted
         },
     );
-    resp.draw_focus(ui.painter(), rect, p);
+    resp.draw_focus(&ui.painter(), rect, p);
     let clicked = resp.activated(ui);
     let _ = resp.on_hover_text(tip);
     clicked
@@ -599,8 +609,8 @@ fn mini_action(ui: &mut Ui, rect: Rect, label: &str, p: &crate::theme::Palette) 
     } else {
         p.surface
     };
-    bevel_rect(ui.painter(), rect, fill, p);
-    resp.draw_focus(ui.painter(), rect, p);
+    bevel_rect(&ui.painter(), rect, fill, p);
+    resp.draw_focus(&ui.painter(), rect, p);
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,

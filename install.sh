@@ -1,26 +1,37 @@
 #!/usr/bin/env bash
+# NIRUAMP installer.
+#
+#   ./install.sh             download the published static binary (verified with
+#                            SHA256SUMS), or build with cargo when that fails
+#   ./install.sh --prebuilt  only the published binary
+#   ./install.sh --source    always build with cargo (also: --build)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BIN="${HOME}/.local/bin"
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
-B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'
+B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; N=$'\033[0m'
 
 MODE="${NIRUAMP_INSTALL_MODE:-auto}"
 for arg in "$@"; do
   case "$arg" in
     --prebuilt) MODE=prebuilt ;;
-    --source) MODE=source ;;
+    --source|--build) MODE=source ;;
     -h|--help)
       printf "Usage: ./install.sh [--prebuilt|--source]\n"
-      printf "  --prebuilt  Download the published x86_64 Linux binary (default when available)\n"
-      printf "  --source    Build with cargo from this checkout\n"
+      printf "  --prebuilt  Download the published static x86_64 binary (default when available)\n"
+      printf "  --source    Build with cargo from this checkout (also --build)\n"
       exit 0 ;;
     *) printf "%sERROR%s unknown option: %s\n" "$R" "$N" "$arg"; exit 2 ;;
   esac
 done
 
-printf "%sNIRUAMP%s%s\n" "$B" "$N" " — Rust graphical frontend for NPLAY"
+printf "%sNIRUAMP%s%s\n" "$B" "$N" ": graphical frontend for NPLAY"
+
+version_at_least() { # HAVE WANT
+  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
+}
+
 command -v nplay >/dev/null || {
   printf "%sERROR%s NPLAY is required and was not found in PATH.\n" "$R" "$N"
   printf "Install NPLAY 1.7.3 or newer: https://github.com/nirucon/nplay\n"
@@ -29,83 +40,55 @@ command -v nplay >/dev/null || {
 }
 if command -v nplay >/dev/null; then
   VERSION_NPLAY="$(nplay --version 2>/dev/null | awk '{print $2}')"
-  if [ -n "$VERSION_NPLAY" ] && ! python3 - "$VERSION_NPLAY" <<'PY'
-import sys
-v=sys.argv[1].split('.')
-try: ok=(int(v[0]),int(v[1]),int(v[2] if len(v)>2 else 0)) >= (1,7,3)
-except Exception: ok=False
-sys.exit(0 if ok else 1)
-PY
-  then
-    printf "%sERROR%s NPLAY %s is too old; 1.7.2 or newer is required.\n" "$R" "$N" "$VERSION_NPLAY"
+  if [ -n "$VERSION_NPLAY" ] && ! version_at_least "$VERSION_NPLAY" 1.7.3; then
+    printf "%sERROR%s NPLAY %s is too old; 1.7.3 or newer is required.\n" "$R" "$N" "$VERSION_NPLAY"
     printf "Upgrade NPLAY, then run this installer again.\n"
     [ "${NIRUAMP_SKIP_NPLAY_CHECK:-0}" = "1" ] || exit 1
   fi
   printf "NPLAY %s found\n" "${VERSION_NPLAY:-unknown}"
 fi
 
-LDCONFIG="$(command -v ldconfig 2>/dev/null || true)"
-if [ -z "$LDCONFIG" ] && [ -x /sbin/ldconfig ]; then LDCONFIG=/sbin/ldconfig; fi
-if [ -n "$LDCONFIG" ] && ! "$LDCONFIG" -p 2>/dev/null | grep -q 'libxkbcommon-x11.so.0'; then
-  printf "%sWARNING%s libxkbcommon-x11 is not visible. If the GUI fails to start:\n" "$Y" "$N"
-  printf "  Debian/Ubuntu: sudo apt install libxkbcommon-x11-0 libx11-6 libgl1 libegl1 libwayland-client0\n"
-  printf "  Arch/Omarchy:  sudo pacman -S libxkbcommon libxkbcommon-x11 wayland mesa\n"
-fi
-
-cargo_version_ok() {
-  command -v cargo >/dev/null || return 1
-  python3 - "$(cargo --version 2>/dev/null | awk '{print $2}')" <<'PY'
-import sys
-v=sys.argv[1].split('.')
-try: ok=(int(v[0]),int(v[1])) >= (1,85)
-except Exception: ok=False
-sys.exit(0 if ok else 1)
-PY
-}
-
-glibc_ok() {
-  command -v getconf >/dev/null || return 1
-  python3 - "$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')" <<'PY'
-import sys
-v=sys.argv[1].split('.')
-try: ok=(int(v[0]),int(v[1])) >= (2,36)
-except Exception: ok=False
-sys.exit(0 if ok else 1)
-PY
-}
-
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 ARCH="$(uname -m)"
-ASSET=""
-case "$ARCH" in
-  x86_64|amd64) ASSET="niruamp-${VERSION}-x86_64-linux-gnu.tar.gz" ;;
-esac
-URL="https://github.com/nirucon/niruamp/releases/download/v${VERSION}/${ASSET}"
+BASE="https://github.com/nirucon/niruamp/releases/download/v${VERSION}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 BINARY=""
 
-download_prebuilt() {
-  [ -n "$ASSET" ] || return 1
-  glibc_ok || return 1
-  command -v curl >/dev/null || return 1
-  printf "Downloading prebuilt %s…\n" "$ASSET"
-  curl -fL --retry 2 --connect-timeout 15 -o "$TMP/$ASSET" "$URL" >/dev/null 2>&1 || return 1
-  tar -xzf "$TMP/$ASSET" -C "$TMP" || return 1
-  if [ -f "$TMP/niruamp" ]; then
-    BINARY="$TMP/niruamp"
-    return 0
+fetch() { # URL FILE
+  if command -v curl >/dev/null; then
+    curl -fsSL --retry 2 --connect-timeout 15 -o "$2" "$1"
+  elif command -v wget >/dev/null; then
+    wget -qO "$2" "$1"
+  else
+    return 1
   fi
-  return 1
+}
+
+download_prebuilt() {
+  case "$ARCH" in x86_64|amd64) ;; *) return 1 ;; esac
+  command -v sha256sum >/dev/null || return 1
+  printf "Downloading prebuilt NIRUAMP %s…\n" "$VERSION"
+  fetch "$BASE/niruamp" "$TMP/niruamp" || return 1
+  fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS" || return 1
+  expected=$(awk '$2 == "niruamp" || $2 == "*niruamp" { print $1; exit }' "$TMP/SHA256SUMS")
+  actual=$(sha256sum "$TMP/niruamp" | awk '{print $1}')
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    printf "%sERROR%s the downloaded binary failed SHA-256 verification.\n" "$R" "$N"
+    return 1
+  fi
+  printf "SHA-256 verification passed.\n"
+  chmod +x "$TMP/niruamp"
+  "$TMP/niruamp" --version | grep -qx "NIRUAMP $VERSION" || return 1
+  BINARY="$TMP/niruamp"
 }
 
 build_from_source() {
-  if ! cargo_version_ok; then
-    printf "%sERROR%s No prebuilt binary is available for this architecture/glibc,\n" "$R" "$N"
-    printf "and cargo 1.85+ is required to build from source.\n"
-    printf "Install Rust: https://rustup.rs\n"
+  command -v cargo >/dev/null || {
+    printf "%sERROR%s No prebuilt binary could be used and cargo is not installed.\n" "$R" "$N"
+    printf "Install Rust (https://rustup.rs) or check your network.\n"
     exit 1
-  fi
+  }
   printf "Building release binary from source…\n"
   cd "$ROOT"
   cargo build --release --locked
@@ -114,8 +97,8 @@ build_from_source() {
 
 if [ "$MODE" = "prebuilt" ]; then
   download_prebuilt || {
-    printf "%sERROR%s No compatible prebuilt binary could be downloaded.\n" "$R" "$N"
-    printf "Try ./install.sh --source or check your network/glibc version.\n"
+    printf "%sERROR%s No verified prebuilt binary could be downloaded.\n" "$R" "$N"
+    printf "Try ./install.sh --source or check your network.\n"
     exit 1
   }
 elif [ "$MODE" = "source" ]; then

@@ -11,7 +11,7 @@ The two programs meet at NPLAY's versioned local service (protocol 1, shipped in
 NPLAY 1.7.1). See [PROTOCOL.md](PROTOCOL.md).
 
 ```
-NIRUAMP (Rust/egui)                    NPLAY (Python)
+NIRUAMP (Rust, x11rb)                  NPLAY
 ┌────────────────────┐   Unix socket  ┌─────────────────────────────┐
 │ views / app state  │◄──────────────►│ nplay/service (JSON-RPC)    │
 │ protocol client    │  snapshot+events│ App / queue / providers     │
@@ -27,7 +27,10 @@ NIRUAMP can attach to the same service. NPLAY remains fully standalone.
 
 | Module | Responsibility |
 |---|---|
-| `main.rs` | Arguments, single-instance claim, backend acquisition, eframe startup |
+| `main.rs` | Arguments, single-instance claim, backend acquisition, window creation |
+| `shell.rs` | Event loop: X events, eventfd wake-ups, frame deadline, damage, viewport commands |
+| `x.rs` | X11 window, keyboard map, EWMH requests, clipboard, XDND drops, MIT-SHM present |
+| `gui/` | Canvas GUI: egui-shaped layout and widgets, text (ab_glyph), tiny-skia painting |
 | `app.rs` | State, commands, event handling, optimistic loading, keyboard, top-level layout, modals/toasts |
 | `protocol.rs` | Newline-delimited JSON-RPC client, handshake, reader/writer threads, bounded wakeups |
 | `platform.rs` | Socket discovery, `nplay --serve` launch, ownership, instance socket |
@@ -69,9 +72,12 @@ selection or steal text focus.
 - One frame scheduler (`src/schedule.rs`): every reason to draw without input
   (LED clock on the next whole second, spectrum step, toast fade, search
   debounce, visualizer retry, loading, screenshot) is reduced to one deadline,
-  and `update` requests exactly one repaint per frame. egui subtracts its
-  predicted frame time from repaint delays; the scheduler adds it back so a
-  33 ms spectrum step does not decay into a burst of immediate frames.
+  and `update` requests exactly one repaint per frame; the event loop sleeps
+  in `poll` until that deadline, an X event or a worker's eventfd wake-up.
+- Each frame builds a list of shapes; only the area where it differs from
+  the previous frame is painted and sent to the X server (MIT-SHM, or
+  `PutImage` without it). A spectrum frame repaints the spectrum, not the
+  window.
 - Messages from NPLAY wake the UI through the protocol reader, coalesced to one
   wake per frame. The 1.0 `visualization.data` poll response is quiet: the next
   poll frame shows it.
@@ -97,7 +103,7 @@ selection or steal text focus.
   NPLAY's browse commands before Play/Queue/Playlist actions. The frontend never
   sends a container as a track to the service; NPLAY also rejects such rows at
   the playback/queue/playlist boundary.
-- Custom controls participate in egui's focus chain and draw a visible focus
+- Custom controls participate in the focus chain (Tab) and draw a visible focus
   ring; Enter activates the focused control. Rows are selected with Up/Down and
   are deliberately not part of the tab chain.
 - Windowshade changes the viewport size and draws a compact 58-point deck.

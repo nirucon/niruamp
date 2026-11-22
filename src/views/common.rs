@@ -1,9 +1,9 @@
 //! Original Winamp-inspired drawing primitives.
-use crate::theme::Palette;
-use egui::{
+use crate::gui::{
     pos2, vec2, Color32, FontId, Id, Key, Painter, Rect, Response, Rounding, Sense, Shape, Stroke,
     Ui, Vec2,
 };
+use crate::theme::Palette;
 
 pub trait ResponseExt {
     /// Mouse click or Enter on a keyboard-focused control. Space stays bound to
@@ -178,9 +178,9 @@ pub fn icon_button_rect(
         palette.surface
     };
     if pressed {
-        painter_bevel_inset(ui.painter(), rect, fill, palette);
+        painter_bevel_inset(&ui.painter(), rect, fill, palette);
     } else {
-        bevel_rect(ui.painter(), rect, fill, palette);
+        bevel_rect(&ui.painter(), rect, fill, palette);
     }
     let color = if !enabled {
         palette.disabled
@@ -189,7 +189,12 @@ pub fn icon_button_rect(
     } else {
         palette.foreground
     };
-    draw_icon(ui.painter(), icon, rect.shrink(rect.height() * 0.22), color);
+    draw_icon(
+        &ui.painter(),
+        icon,
+        rect.shrink(rect.height() * 0.22),
+        color,
+    );
     if response.has_focus() && enabled {
         ui.painter().rect_stroke(
             rect.expand(1.0),
@@ -230,7 +235,8 @@ pub fn draw_icon(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
     let thick = (w.min(h) * 0.13).clamp(1.3, 3.0);
     let stroke = Stroke::new(thick, color);
     let c = rect.center();
-    let poly = |pts: Vec<egui::Pos2>| painter.add(Shape::convex_polygon(pts, color, Stroke::NONE));
+    let poly =
+        |pts: Vec<crate::gui::Pos2>| painter.add(Shape::convex_polygon(pts, color, Stroke::NONE));
     match icon {
         Icon::Play => {
             let r = rect.shrink2(vec2(w * 0.18, h * 0.08));
@@ -637,7 +643,7 @@ pub fn draw_icon(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
     }
 }
 
-fn arrow_head(painter: &Painter, tip: egui::Pos2, dir: Vec2, color: Color32, thick: f32) {
+fn arrow_head(painter: &Painter, tip: crate::gui::Pos2, dir: Vec2, color: Color32, thick: f32) {
     let d = dir.normalized();
     let n = vec2(-d.y, d.x);
     let s = thick * 2.4;
@@ -751,7 +757,7 @@ pub fn marquee(
     if text.is_empty() {
         return;
     }
-    let galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
+    let galley = painter.layout_no_wrap(text.to_owned(), font, color);
     let cy = rect.center().y - galley.size().y / 2.0;
     if galley.size().x <= rect.width() || reduced_motion {
         if galley.size().x <= rect.width() {
@@ -842,7 +848,7 @@ pub fn hardware_slider_rect(
         rect.center(),
         vec2(rect.width() - 4.0, (rect.height() * 0.34).clamp(4.0, 9.0)),
     );
-    inset_rect(ui.painter(), groove, palette.inset, palette);
+    inset_rect(&ui.painter(), groove, palette.inset, palette);
     let frac = if max > 0.0 {
         (value / max).clamp(0.0, 1.0) as f32
     } else {
@@ -869,7 +875,7 @@ pub fn hardware_slider_rect(
         vec2((rect.height() * 0.28).clamp(5.0, 9.0), rect.height() * 0.85),
     );
     bevel_rect(
-        ui.painter(),
+        &ui.painter(),
         thumb,
         if response.hovered() || response.dragged() {
             palette.surface_hi
@@ -937,7 +943,7 @@ pub fn draw_art_placeholder(
     if !label.is_empty() {
         painter.text(
             rect.left_bottom() + vec2(5.0, -4.0),
-            egui::Align2::LEFT_BOTTOM,
+            crate::gui::Align2::LEFT_BOTTOM,
             label,
             FontId::proportional(8.0),
             palette.muted,
@@ -959,7 +965,7 @@ pub fn logo(painter: &Painter, rect: Rect, palette: &Palette) {
 
 pub fn section_label(ui: &mut Ui, text: &str, palette: &Palette) {
     ui.label(
-        egui::RichText::new(text)
+        crate::gui::RichText::new(text)
             .size(10.0)
             .color(palette.muted)
             .strong(),
@@ -972,6 +978,41 @@ pub fn divider(ui: &mut Ui, palette: &Palette) {
         [rect.left_center(), rect.right_center()],
         Stroke::new(1.0_f32, palette.border),
     );
+}
+
+/// The window icon (`_NET_WM_ICON`): the logo in the classic palette,
+/// 32 x 32 ARGB.
+pub fn window_icon() -> (u32, u32, Vec<u32>) {
+    let p = crate::theme::classic_palette();
+    let size = 32u32;
+    let Some(mut pm) = tiny_skia::Pixmap::new(size, size) else {
+        return (0, 0, Vec::new());
+    };
+    let ctx = crate::gui::Context::new();
+    let painter = ctx.layer_painter(crate::gui::LayerId::new(
+        crate::gui::Order::Background,
+        Id::new("icon"),
+    ));
+    logo(
+        &painter,
+        Rect::from_min_size(pos2(0.0, 0.0), vec2(32.0, 32.0)),
+        &p,
+    );
+    let shapes = ctx.end_frame();
+    let mut raster = crate::gui::raster::Raster::new();
+    ctx.fonts_mut(|f| raster.paint(&mut pm, f, &shapes));
+    let argb = pm
+        .pixels()
+        .iter()
+        .map(|px| {
+            let c = px.demultiply();
+            (c.alpha() as u32) << 24
+                | (c.red() as u32) << 16
+                | (c.green() as u32) << 8
+                | c.blue() as u32
+        })
+        .collect();
+    (size, size, argb)
 }
 
 #[cfg(test)]

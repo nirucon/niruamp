@@ -351,7 +351,7 @@ impl InstanceGuard {
     /// Accept activation requests from later launches. The accept blocks:
     /// the thread sleeps in the kernel until a client connects, and drop
     /// unblocks it by connecting once with the stop flag set.
-    pub fn start_listener(&mut self, tx: Sender<()>, ctx: egui::Context) {
+    pub fn start_listener(&mut self, tx: Sender<()>, ctx: crate::shell::Wake) {
         let Some(listener) = self.listener.take() else {
             return;
         };
@@ -361,7 +361,7 @@ impl InstanceGuard {
             .spawn(move || {
                 serve_instance(listener, &stop, || {
                     let _ = tx.send(());
-                    ctx.request_repaint();
+                    ctx();
                 })
             })
             .ok();
@@ -403,11 +403,6 @@ fn serve_instance(listener: UnixListener, stop: &AtomicBool, mut activate: impl 
 }
 
 pub fn spawn_backend_for_tests(_prefs: &Preferences) {}
-
-#[allow(dead_code)]
-pub fn wake_arc(ctx: egui::Context) -> Arc<dyn Fn() + Send + Sync> {
-    Arc::new(move || ctx.request_repaint())
-}
 
 #[cfg(test)]
 mod tests {

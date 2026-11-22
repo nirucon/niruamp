@@ -1,3 +1,39 @@
+# NIRUAMP 0.6.0
+
+A rewrite of the drawing layer: egui, eframe, winit and OpenGL are gone.
+NIRUAMP now draws with its own small canvas GUI (x11rb, tiny-skia, MIT-SHM),
+in the same style as NIRUFM and NIRUTERM. The look, views, themes, keys and
+the NPLAY protocol are unchanged.
+
+- Memory 8 MB instead of 120 MB (Xvfb; 124 MB on real hardware, mostly GL
+  mappings), the window shows in about 30 ms instead of 120 ms, and 6 threads
+  instead of 33.
+- No CPU while nothing changes: one `poll` on the X connection, an eventfd
+  for the worker threads and the frame scheduler's deadline. Only the changed
+  part of the window is redrawn: playing with the 30 fps spectrum costs about
+  2 to 3 % of one core in Xvfb (0.5.2: 305 % with llvmpipe).
+- A static musl binary: no glibc, GL, EGL or xkbcommon libraries at run time.
+  `install.sh` downloads it and checks it against the release's `SHA256SUMS`
+  (`--source`/`--build` still builds with cargo).
+- The egui default faces (Ubuntu Light, Hack) are embedded, so text looks as
+  before; missing symbols (arrows) now come from a system font instead of
+  boxes. A NIRUX `font_path` is still used.
+- `--class NAME` sets WM_CLASS (default `niruamp`, instance and class).
+- The tray starts after the first frame, so a slow D-Bus never delays the
+  window.
+- Fixes: typing in the search field no longer triggers shortcuts (N, P, M
+  and friends); Ctrl+F no longer also favorites the current track; the back
+  button beside the search field is no longer covered; Enter saves a
+  playlist name dialog.
+- Wayland: NIRUAMP is an X11 program now and runs through XWayland. The
+  Hyprland integration (floating rule, pin, tray workspace, visibility from
+  the compositor) is kept and used under XWayland. `NIRUAMP_BACKEND` is
+  gone.
+- New `tests/xvfb.sh`: an end-to-end run in a private Xvfb against a
+  sandboxed NPLAY (first frame, memory, idle CPU, keys, context menu, queue,
+  windowshade, search, settings, window drag, hidden spectrum, close). CI
+  and the release workflow run it.
+
 # NIRUAMP 0.5.2
 
 Local Spotify playback authorization (needs NPLAY 1.8.1, protocol 1.2).

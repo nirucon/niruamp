@@ -424,3 +424,25 @@ Interpretation:
 
 These gaps are stated instead of being redefined as success. The reproduced
 commands in `docs/TESTING.md` allow them to be verified on the owner's machines.
+
+## 0.6.0 (x11rb canvas), 2026-11-22
+
+Measured on othala in a private Xvfb (display :64) with a sandboxed NPLAY
+1.8.2 service, `tools/fake-mpv` and `tools/fake-cava` (30 fps synthetic
+spectrum), same harness for both versions:
+
+| | 0.5.2 | 0.6.0 (static musl) |
+|---|---|---|
+| Window mapped after exec | 118 ms | 28 ms |
+| First frame (`NIRUAMP_TIMING`) | n/a | 13 to 17 ms |
+| RSS after start | 120 MB | 8.1 MB |
+| RSS while playing | 121 MB | 8.0 MB (8.9 MB with the tray on a D-Bus session) |
+| Threads | 33 | 6 (8 to 10 with the tray) |
+| CPU stopped / idle | 0.00 % | 0.00 % |
+| CPU playing, spectrum visible | 305 % (llvmpipe) | 2 to 3 % |
+| CPU unmapped while playing | not measured | 0.00 % |
+
+The fake CAVA keeps producing bars while paused, so "paused" with the
+spectrum on costs the same as playing in this harness; with real CAVA a
+paused player is silent and NIRUAMP draws nothing. `tests/xvfb.sh` passes on
+othala with both the glibc and the static musl build.

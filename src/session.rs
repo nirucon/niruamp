@@ -75,38 +75,6 @@ pub fn niru() -> bool {
     }
 }
 
-/// `NIRUAMP_BACKEND=x11` forces X11 (XWayland), `wayland` forces Wayland.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Backend {
-    X11,
-    Wayland,
-}
-
-/// The windowing backend to ask winit for. NIRU is X11; elsewhere native
-/// Wayland is used whenever a Wayland display exists.
-pub fn backend() -> Backend {
-    match env("NIRUAMP_BACKEND")
-        .as_deref()
-        .map(str::to_ascii_lowercase)
-    {
-        Some(b) if b == "x11" || b == "xwayland" => return Backend::X11,
-        Some(b) if b == "wayland" => return Backend::Wayland,
-        _ => {}
-    }
-    if env("WAYLAND_DISPLAY").is_some() && !niru() {
-        Backend::Wayland
-    } else {
-        Backend::X11
-    }
-}
-
-/// Whether presenting may wait for vsync: only on a real X server. Under
-/// Wayland and XWayland a hidden window gets no frame callbacks, and a
-/// swap that waits for one blocks the event loop.
-pub fn vsync(backend: Backend) -> bool {
-    backend == Backend::X11 && env("WAYLAND_DISPLAY").is_none()
-}
-
 /// Hyprland's instance signature when NIRUAMP runs under Hyprland natively.
 pub fn hyprland() -> Option<String> {
     let sig = env("HYPRLAND_INSTANCE_SIGNATURE")?;
@@ -169,8 +137,6 @@ mod tests {
     fn niru_session_env() {
         with_env(&vars(&[("XDG_CURRENT_DESKTOP", Some("NIRU"))]), || {
             assert!(niru());
-            assert_eq!(backend(), Backend::X11);
-            assert!(vsync(Backend::X11), "NIRUWM keeps vsync as in 0.4");
         });
         with_env(&vars(&[("XDG_CURRENT_DESKTOP", Some("NIRUWM"))]), || {
             assert!(niru())
@@ -181,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn hyprland_is_native_wayland() {
+    fn hyprland_is_detected_outside_niru() {
         with_env(
             &vars(&[
                 ("XDG_CURRENT_DESKTOP", Some("Hyprland")),
@@ -191,33 +157,8 @@ mod tests {
             ]),
             || {
                 assert!(!niru());
-                assert_eq!(backend(), Backend::Wayland);
-                assert!(!vsync(Backend::Wayland));
                 assert_eq!(hyprland().as_deref(), Some("abc_1_2"));
             },
-        );
-    }
-
-    #[test]
-    fn backend_override() {
-        with_env(
-            &vars(&[
-                ("XDG_CURRENT_DESKTOP", Some("Hyprland")),
-                ("WAYLAND_DISPLAY", Some("wayland-1")),
-                ("NIRUAMP_BACKEND", Some("x11")),
-            ]),
-            || {
-                assert_eq!(backend(), Backend::X11);
-                // XWayland: no blocking vsync either.
-                assert!(!vsync(Backend::X11));
-            },
-        );
-        with_env(
-            &vars(&[
-                ("XDG_CURRENT_DESKTOP", Some("NIRU")),
-                ("NIRUAMP_BACKEND", Some("wayland")),
-            ]),
-            || assert_eq!(backend(), Backend::Wayland),
         );
     }
 
@@ -233,7 +174,6 @@ mod tests {
     fn plain_x11_without_niru_markers() {
         with_env(&vars(&[("XDG_CURRENT_DESKTOP", Some("XFCE"))]), || {
             assert!(!niru());
-            assert_eq!(backend(), Backend::X11);
         });
     }
 }
