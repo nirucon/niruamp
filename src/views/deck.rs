@@ -467,8 +467,8 @@ impl NiruampApp {
         let n = self.vis.displayed.len().min(48);
         let gap = 1.0;
         let bw = ((inner.width() - gap * (n.saturating_sub(1) as f32)) / n.max(1) as f32).max(1.0);
-        for i in 0..n {
-            let v = self.vis.displayed[i].clamp(0.0, 1.0);
+        for (i, shown) in self.vis.displayed.iter().take(n).enumerate() {
+            let v = shown.clamp(0.0, 1.0);
             let h = (inner.height() * (0.06 + v * 0.94)).max(1.0);
             let x = inner.left() + i as f32 * (bw + gap);
             let bar = Rect::from_min_max(pos2(x, inner.bottom() - h), pos2(x + bw, inner.bottom()));
