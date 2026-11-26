@@ -57,6 +57,8 @@ pub enum Icon {
     Queue,
     Refresh,
     Fullscreen,
+    /// A deck face split into three panels: switch skins.
+    Skin,
 }
 
 pub fn fmt_time(seconds: f64) -> String {
@@ -384,6 +386,23 @@ pub fn draw_icon(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
                 painter.rect_filled(
                     Rect::from_center_size(pos2(x, y), vec2(w * 0.18, h * 0.12)),
                     Rounding::same(1.0),
+                    color,
+                );
+            }
+        }
+        Icon::Skin => {
+            let face = rect.shrink2(vec2(w * 0.08, h * 0.16));
+            painter.rect_stroke(face, Rounding::same(1.5), Stroke::new(thick * 0.8, color));
+            let screen = Rect::from_min_max(
+                face.left_top() + vec2(w * 0.14, h * 0.14),
+                pos2(face.right() - w * 0.14, face.center().y + h * 0.02),
+            );
+            painter.rect_filled(screen, Rounding::same(1.0), color);
+            for k in 0..3 {
+                let x = face.left() + face.width() * (0.28 + 0.22 * k as f32);
+                painter.circle_filled(
+                    pos2(x, face.bottom() - h * 0.15),
+                    (w * 0.06).max(1.0),
                     color,
                 );
             }

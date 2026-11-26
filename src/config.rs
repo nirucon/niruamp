@@ -84,7 +84,12 @@ pub struct Preferences {
     pub always_on_top: bool,
     pub keep_playing: bool,
     pub show_visualization: bool,
+    /// The welcome sound on the first start after login.
     pub startup_sound: bool,
+    /// Welcome sound level, percent of the sound's full amplitude.
+    pub startup_sound_volume: u32,
+    /// Deck skin: `classic`, `phosphor` or `hifi`.
+    pub skin: String,
     pub tray_enabled: bool,
     /// `None` follows the NIRUX motion setting.
     pub reduced_motion: Option<bool>,
@@ -109,6 +114,8 @@ impl Default for Preferences {
             keep_playing: false,
             show_visualization: true,
             startup_sound: true,
+            startup_sound_volume: crate::sound::DEFAULT_VOLUME,
+            skin: "classic".into(),
             tray_enabled: true,
             reduced_motion: None,
             remaining_time: false,
@@ -140,6 +147,8 @@ impl Preferences {
         if !VIS_FPS_CHOICES.contains(&prefs.visualization_fps) {
             prefs.visualization_fps = 30;
         }
+        prefs.startup_sound_volume = prefs.startup_sound_volume.clamp(1, 100);
+        prefs.skin = crate::skin::Skin::from_key(&prefs.skin).key().to_string();
         if prefs.nplay_bin.trim().is_empty() {
             prefs.nplay_bin = "nplay".into();
         }
@@ -235,5 +244,8 @@ mod tests {
         let text = toml::to_string_pretty(&prefs).unwrap();
         let back: Preferences = toml::from_str(&text).unwrap();
         assert_eq!(back.visualization_fps, 30);
+        // 0.7 keys: the welcome sound at 35 % and the classic skin.
+        assert_eq!(prefs.startup_sound_volume, 35);
+        assert_eq!(prefs.skin, "classic");
     }
 }

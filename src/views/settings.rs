@@ -158,6 +158,30 @@ impl NiruampApp {
                 );
             });
             ui.horizontal(|ui| {
+                ui.label(RichText::new("Skin").size(s(11.0)).color(p.foreground));
+                let current = self.skin();
+                let mut chosen = current;
+                crate::gui::ComboBox::from_id_salt("skin-select")
+                    .selected_text(current.label())
+                    .show_ui(ui, |ui| {
+                        for skin in crate::skin::Skin::ALL {
+                            ui.selectable_value(&mut chosen, skin, skin.label());
+                        }
+                    });
+                if chosen != current {
+                    self.set_skin(chosen, ctx);
+                }
+                ui.label(
+                    RichText::new(match chosen {
+                        crate::skin::Skin::Classic => "hardware panel · K cycles skins",
+                        crate::skin::Skin::Phosphor => "green CRT console · K cycles skins",
+                        crate::skin::Skin::HiFi => "cassette deck with VU meters · K cycles skins",
+                    })
+                    .size(s(9.0))
+                    .color(p.muted),
+                );
+            });
+            ui.horizontal(|ui| {
                 ui.label(RichText::new("Scale").size(s(11.0)).color(p.foreground));
                 let mut scale = self.prefs.scale;
                 let resp = ui.add(
@@ -176,7 +200,7 @@ impl NiruampApp {
                         .color(p.muted),
                 );
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let mut top = self.prefs.always_on_top;
                 // Wayland leaves stacking to the compositor; NIRUAMP can ask
                 // Hyprland (pin), not other compositors.
@@ -212,17 +236,6 @@ impl NiruampApp {
                     }
                     self.update_prefs(ctx);
                 }
-                let mut startup_sound = self.prefs.startup_sound;
-                if ui
-                    .checkbox(
-                        &mut startup_sound,
-                        RichText::new("Startup sound").size(s(11.0)),
-                    )
-                    .changed()
-                {
-                    self.prefs.startup_sound = startup_sound;
-                    self.update_prefs(ctx);
-                }
                 let mut remaining = self.prefs.remaining_time;
                 if ui
                     .checkbox(
@@ -235,7 +248,61 @@ impl NiruampApp {
                     self.update_prefs(ctx);
                 }
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("Welcome sound")
+                        .size(s(11.0))
+                        .color(p.foreground),
+                );
+                let before = (self.prefs.startup_sound, self.prefs.startup_sound_volume);
+                let label = |on: bool, v: u32| {
+                    if on {
+                        format!("{v} %")
+                    } else {
+                        "Off".to_string()
+                    }
+                };
+                crate::gui::ComboBox::from_id_salt("welcome-sound-select")
+                    .selected_text(label(before.0, before.1))
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(!before.0, "Off").clicked() {
+                            self.prefs.startup_sound = false;
+                        }
+                        for v in crate::sound::VOLUME_CHOICES {
+                            let text = if v == crate::sound::DEFAULT_VOLUME {
+                                format!("{v} % (default)")
+                            } else {
+                                format!("{v} %")
+                            };
+                            if ui
+                                .selectable_label(before.0 && before.1 == v, text)
+                                .clicked()
+                            {
+                                self.prefs.startup_sound = true;
+                                self.prefs.startup_sound_volume = v;
+                            }
+                        }
+                    });
+                if (self.prefs.startup_sound, self.prefs.startup_sound_volume) != before {
+                    self.update_prefs(ctx);
+                }
+                if ui
+                    .add_enabled(
+                        self.prefs.startup_sound,
+                        crate::gui::Button::new(RichText::new("TRY").size(s(9.0))),
+                    )
+                    .on_hover_text("Play the welcome sound at this level")
+                    .clicked()
+                {
+                    crate::sound::play(self.prefs.startup_sound_volume);
+                }
+                ui.label(
+                    RichText::new("plays on the first start after login")
+                        .size(s(9.0))
+                        .color(p.muted),
+                );
+            });
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Motion").size(s(11.0)).color(p.foreground));
                 let before = self.prefs.reduced_motion;
                 let current = match self.prefs.reduced_motion {

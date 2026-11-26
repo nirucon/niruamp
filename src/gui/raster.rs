@@ -296,7 +296,15 @@ impl Raster {
                     && is_int(r.top())
                     && is_int(r.right())
                     && is_int(r.bottom()));
-                pm.fill_rect(tr, &p, Transform::identity(), None);
+                if p.anti_alias && cfg!(debug_assertions) {
+                    // tiny-skia's anti-aliased rect fill has a debug-only
+                    // assertion (hairline_aa fill_dot8) that fractional
+                    // rects can trip; a path fill draws the same rect.
+                    let path = tiny_skia::PathBuilder::from_rect(tr);
+                    pm.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
+                } else {
+                    pm.fill_rect(tr, &p, Transform::identity(), None);
+                }
             }
             return;
         }

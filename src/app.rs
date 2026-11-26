@@ -152,18 +152,15 @@ pub(crate) fn vis_transport(caps: &Capabilities, stream_unsupported: bool) -> Vi
 }
 
 /// CAVA byte (0-255) to display height, log-shaped for visibility.
-pub(crate) fn shape_bar(b: u8) -> f32 {
-    (b as f32 / 255.0).clamp(0.0, 1.0).powf(0.62)
-}
-
 pub(crate) struct VisState {
     pub(crate) requested_start: bool,
     pub(crate) started: bool,
     pub(crate) inflight: bool,
-    /// Actual CAVA samples, log-shaped for visibility.
+    /// Actual CAVA samples, levelled for display (`spectrum::Leveler`).
     pub(crate) target: Vec<f32>,
-    /// Display easing between samples (fast attack, slower release).
-    pub(crate) displayed: Vec<f32>,
+    /// Drawn bars and peak caps (fast attack, gravity fall).
+    pub(crate) displayed: crate::spectrum::Bars,
+    pub(crate) leveler: crate::spectrum::Leveler,
     pub(crate) failed: String,
     pub(crate) retry_at: Option<Instant>,
     pub(crate) last_poll: Instant,
@@ -187,7 +184,8 @@ impl Default for VisState {
             started: false,
             inflight: false,
             target: Vec::new(),
-            displayed: Vec::new(),
+            displayed: crate::spectrum::Bars::default(),
+            leveler: crate::spectrum::Leveler::default(),
             failed: String::new(),
             retry_at: None,
             last_poll: Instant::now() - Duration::from_secs(10),
@@ -393,6 +391,8 @@ pub struct NiruampApp {
     pub(crate) hidden_to_tray: bool,
     pub(crate) tray_pending: Option<Sender<TrayCommand>>,
     pub(crate) startup_sound_done: bool,
+    /// Generated skin textures (gradients, brushed metal, CRT glass).
+    pub(crate) skin_art: crate::skin::SkinArt,
     pub(crate) immersive: bool,
     /// X11 map/obscured/hidden state of our window (None until the first
     /// frame, or without X11).
@@ -532,6 +532,7 @@ impl NiruampApp {
             hidden_to_tray: false,
             tray_pending,
             startup_sound_done: false,
+            skin_art: crate::skin::SkinArt::default(),
             immersive: false,
             visibility: Some(crate::visibility::Visibility::shared(vis_state)),
             visibility_probed: false,
@@ -606,8 +607,24 @@ impl NiruampApp {
         }
     }
 
+    /// The window's palette: the theme's colours under the current skin.
     pub(crate) fn palette(&self) -> Palette {
-        self.theme.palette
+        self.skin().palette(&self.theme.palette)
+    }
+
+    pub(crate) fn skin(&self) -> crate::skin::Skin {
+        crate::skin::Skin::from_key(&self.prefs.skin)
+    }
+
+    /// Switch the deck skin (Settings, the skin button and `K`), saved.
+    pub(crate) fn set_skin(&mut self, skin: crate::skin::Skin, ctx: &Context) {
+        if skin == self.skin() {
+            return;
+        }
+        self.prefs.skin = skin.key().to_string();
+        theme::install_style(ctx, &self.theme, &self.prefs);
+        self.update_prefs(ctx);
+        self.toast(format!("Skin: {}", skin.label()), false);
     }
 
     pub(crate) fn s(&self, value: f32) -> f32 {
@@ -1055,12 +1072,7 @@ impl NiruampApp {
             (PendingKind::VisData, Ok(value)) => {
                 self.vis.inflight = false;
                 if let Ok(r) = serde_json::from_value::<VisualizationData>(value) {
-                    let shaped: Vec<f32> = r.bars.into_iter().map(shape_bar).collect();
-                    if shaped.len() != self.vis.displayed.len() {
-                        self.vis.displayed = shaped.clone();
-                    }
-                    self.vis.target = shaped;
-                    self.vis.settled = false;
+                    self.take_vis_frame(&r.bars);
                 }
             }
             (PendingKind::Play, Ok(_)) => {}
@@ -1440,6 +1452,7 @@ impl NiruampApp {
         self.vis.started = false;
         self.vis.target.clear();
         self.vis.displayed.clear();
+        self.vis.leveler.reset();
         self.vis.settled = true;
         self.request(method, json!({}), None);
     }
@@ -1450,13 +1463,20 @@ impl NiruampApp {
         if self.vis.transport != VisTransport::Stream || !self.vis.started || bars.is_empty() {
             return;
         }
-        let shaped: Vec<f32> = bars.into_iter().map(shape_bar).collect();
-        if shaped.len() != self.vis.displayed.len() {
-            self.vis.displayed = shaped.clone();
+        self.take_vis_frame(&bars);
+    }
+
+    /// Level one CAVA frame and make it the bars' new target.
+    fn take_vis_frame(&mut self, raw: &[u8]) {
+        let now = Instant::now();
+        let dt = (now - self.vis.last_frame).as_secs_f32();
+        self.vis.last_frame = now;
+        let levelled = self.vis.leveler.level(raw, dt);
+        if levelled.len() != self.vis.displayed.len() {
+            self.vis.displayed.reset(&vec![0.0; levelled.len()]);
         }
-        self.vis.target = shaped;
+        self.vis.target = levelled;
         self.vis.settled = false;
-        self.vis.last_frame = Instant::now();
     }
 
     /// Spectrum frames per second (stream rate, poll rate, easing rate).
@@ -1582,7 +1602,7 @@ impl NiruampApp {
         }
         let dt = (now - self.vis.last_step).as_secs_f32().clamp(0.001, 0.2);
         self.vis.last_step = now;
-        self.vis.settled = ease(&mut self.vis.displayed, &self.vis.target, dt);
+        self.vis.settled = self.vis.displayed.step(&self.vis.target, dt);
     }
 
     fn tick_geometry(&mut self, ctx: &Context) {
@@ -2447,19 +2467,18 @@ impl NiruampApp {
             if typing || focused {
                 ctx.memory_mut(|m| m.surrender_focus(Id::NULL));
             } else if self.tab != Tab::Playlist {
-                self.tab = Tab::Playlist;
+                self.show_tab(Tab::Playlist, ctx);
             }
             return;
         }
         if typing {
             return;
         }
-        if ctrl && ctx.input(|i| i.key_pressed(Key::F)) {
-            self.tab = Tab::Browse;
-            self.browser.focus_search = true;
-        }
-        if ctx.input(|i| i.key_pressed(Key::Slash)) {
-            self.tab = Tab::Browse;
+        if (ctrl && ctx.input(|i| i.key_pressed(Key::F)))
+            || ctx.input(|i| i.key_pressed(Key::Slash))
+        {
+            // show_tab loads the landing list on first use (it was empty).
+            self.show_tab(Tab::Browse, ctx);
             self.browser.focus_search = true;
         }
         if ctx.input(|i| i.key_pressed(Key::Space)) {
@@ -2487,13 +2506,16 @@ impl NiruampApp {
             self.prefs.show_visualization = !self.prefs.show_visualization;
             self.update_prefs(ctx);
         }
+        if ctx.input(|i| i.key_pressed(Key::K)) {
+            self.set_skin(self.skin().next(), ctx);
+        }
         if !ctrl && ctx.input(|i| i.key_pressed(Key::F)) {
             if let Some(t) = self.playback.current.clone() {
                 self.favorite(&t);
             }
         }
         if ctx.input(|i| i.key_pressed(Key::B)) {
-            self.tab = Tab::Browse;
+            self.show_tab(Tab::Browse, ctx);
         }
         if ctx.input(|i| i.key_pressed(Key::Num1)) {
             self.show_tab(Tab::Playlist, ctx);
@@ -3119,7 +3141,7 @@ impl NiruampApp {
         if !self.startup_sound_done {
             self.startup_sound_done = true;
             if self.prefs.startup_sound {
-                crate::sound::play_startup();
+                crate::sound::play_welcome(self.prefs.startup_sound_volume);
             }
         }
     }
@@ -3160,25 +3182,6 @@ pub(crate) fn decode_artwork(data: &str) -> Result<crate::gui::ColorImage, Strin
         [rgba.width() as usize, rgba.height() as usize],
         rgba.as_raw(),
     ))
-}
-
-/// Ease `shown` toward `target` (fast attack, slower release). Returns true
-/// once every bar has arrived, so no further easing frame is needed.
-pub(crate) fn ease(shown: &mut [f32], target: &[f32], dt: f32) -> bool {
-    let attack = 1.0 - (-dt / 0.045).exp();
-    let release = 1.0 - (-dt / 0.14).exp();
-    let mut settled = true;
-    for (shown, target) in shown.iter_mut().zip(target.iter()) {
-        let delta = *target - *shown;
-        if delta.abs() < 0.004 {
-            *shown = *target;
-            continue;
-        }
-        let factor = if delta >= 0.0 { attack } else { release };
-        *shown += delta * factor;
-        settled = false;
-    }
-    settled
 }
 
 pub(crate) fn save_tab(prefs: &mut Preferences, tab: Tab) {
@@ -3427,20 +3430,6 @@ mod tests {
             serde_json::from_value(serde_json::json!({"visualization": true})).unwrap();
         assert!(!old.visualization_stream);
         assert_eq!(old.protocol_minor, 0);
-    }
-
-    #[test]
-    fn easing_settles_on_a_flat_spectrum() {
-        let mut shown = vec![1.0_f32; 32];
-        let target = vec![0.0_f32; 32];
-        let mut steps = 0;
-        while !ease(&mut shown, &target, 1.0 / 30.0) {
-            steps += 1;
-            assert!(steps < 60, "never settles");
-        }
-        assert!(shown.iter().all(|v| *v == 0.0));
-        // Once settled it stays settled without work.
-        assert!(ease(&mut shown, &target, 1.0 / 30.0));
     }
 
     #[test]

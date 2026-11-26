@@ -85,7 +85,12 @@ pub(crate) fn track_row(
     let dur_w = if show_duration { app.s(42.0) } else { 0.0 };
     let text_left = num_rect.right() + app.s(10.0);
     let text_right = rect.right() - dur_w - app.s(8.0);
-    let title_color = if current && !p.light {
+    // The playing row's title takes the accent only where the accent reads
+    // brighter than secondary text; a grey accent made it look disabled.
+    let title_color = if current
+        && !p.light
+        && crate::theme::luminance(p.accent) >= crate::theme::luminance(p.muted)
+    {
         p.accent
     } else {
         p.foreground

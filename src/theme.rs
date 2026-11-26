@@ -151,6 +151,8 @@ pub struct Palette {
     pub vis_peak: Color32,
     pub shadow: Color32,
     pub light: bool,
+    /// The deck skin this palette was made for (`Skin::palette`).
+    pub skin: crate::skin::Skin,
 }
 
 #[derive(Clone, Debug)]
@@ -238,7 +240,7 @@ fn darken(c: Color32, t: f32) -> Color32 {
     blend(c, Color32::BLACK, t)
 }
 
-fn luminance(c: Color32) -> f32 {
+pub(crate) fn luminance(c: Color32) -> f32 {
     (0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32) / 255.0
 }
 
@@ -266,7 +268,11 @@ fn build_palette(
     } else {
         darken(background, 0.30)
     };
-    let accent = focus;
+    // A muted theme focus colour (Niru Noir's dark grey) is fine for a ring
+    // but too close to the background for text: the playing row looked
+    // disabled. Raise it toward the foreground until it reads.
+    let accent = readable_accent(focus, background, foreground);
+    let focus = accent;
     let led = if light {
         darken(focus, 0.18)
     } else {
@@ -313,7 +319,22 @@ fn build_palette(
         vis_peak,
         shadow: blend(background, Color32::BLACK, if light { 0.35 } else { 0.55 }),
         light,
+        skin: crate::skin::Skin::Classic,
     }
+}
+
+/// `accent` moved toward `foreground` until its luminance differs from the
+/// background by at least 0.40 (unchanged when it already does).
+fn readable_accent(accent: Color32, background: Color32, foreground: Color32) -> Color32 {
+    let bg = luminance(background);
+    let mut c = accent;
+    for step in 1..=10 {
+        if (luminance(c) - bg).abs() >= 0.40 {
+            break;
+        }
+        c = blend(accent, foreground, step as f32 * 0.1);
+    }
+    c
 }
 
 pub(crate) fn classic_palette() -> Palette {
@@ -669,7 +690,7 @@ pub fn available_themes() -> Vec<(String, String)> {
 /// roles the egui visuals used).
 pub fn install_style(ctx: &crate::gui::Context, theme: &ResolvedTheme, prefs: &Preferences) {
     use crate::gui::{vec2, Style, Visuals};
-    let p = theme.palette;
+    let p = crate::skin::Skin::from_key(&prefs.skin).palette(&theme.palette);
     let visuals = Visuals {
         text: p.foreground,
         strong_text: p.foreground,

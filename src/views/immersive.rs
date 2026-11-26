@@ -176,9 +176,10 @@ impl NiruampApp {
         let gap = 2.0;
         let bar_width =
             ((inner.width() - gap * n.saturating_sub(1) as f32) / n.max(1) as f32).max(1.0);
-        for (i, value) in self.vis.displayed.iter().take(n).enumerate() {
+        let bars = &self.vis.displayed;
+        for (i, (value, peak)) in bars.shown.iter().zip(bars.peaks.iter()).enumerate() {
             let value = value.clamp(0.0, 1.0);
-            let height = (inner.height() * (0.04 + value * 0.96)).max(1.0);
+            let height = (inner.height() * (0.03 + value * 0.97)).max(1.0);
             let x = inner.left() + i as f32 * (bar_width + gap);
             let bar = Rect::from_min_max(
                 pos2(x, inner.bottom() - height),
@@ -196,6 +197,15 @@ impl NiruampApp {
                 painter.line_segment(
                     [bar.left_top(), bar.right_top()],
                     Stroke::new(1.0_f32, palette.accent),
+                );
+            }
+            // Peak cap: holds briefly above the bar, then falls.
+            let cap_y = inner.bottom() - inner.height() * (0.03 + peak.clamp(0.0, 1.0) * 0.97);
+            if *peak > value + 0.02 {
+                painter.rect_filled(
+                    Rect::from_min_max(pos2(x, cap_y - 3.0), pos2(x + bar_width, cap_y)),
+                    0.0,
+                    palette.vis_peak,
                 );
             }
         }
