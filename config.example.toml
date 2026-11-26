@@ -1,0 +1,52 @@
+# NIRUAMP preferences: ~/.config/niruamp/config.toml
+#
+# NIRUAMP writes this file itself when you change something in Settings;
+# you rarely need to edit it. Every key is optional: a missing key gets the
+# default shown here. Playback data (queue, library, playlists) lives in NPLAY.
+
+# Colours: "auto" follows NIRUX in the NIRUX session and Omarchy elsewhere,
+# "nirux" or "omarchy" pin one source, "classic" is the standalone palette,
+# or a NIRUX theme name such as "niru-nord".
+theme = "auto"
+
+# Deck skin: "classic" (hardware panel), "phosphor" (green CRT console) or
+# "hifi" (cassette deck with VU meters). All follow the theme's colours.
+# K cycles the skins while NIRUAMP runs.
+skin = "classic"
+
+# Interface scale, 0.75 to 1.6.
+scale = 1.0
+
+always_on_top = false
+
+# Keep the NPLAY service NIRUAMP started playing after the window closes
+# (applies to the next service launch).
+keep_playing = false
+
+# The spectrum, its frame rate (30, 20 or 15) and whether it pauses while the
+# window is on another workspace, covered or minimized.
+show_visualization = true
+visualization_fps = 30
+pause_hidden_visualization = true
+
+# A short welcome sound on the first start after login (not on later starts
+# in the same login), at this percent of full scale (1 to 100).
+startup_sound = true
+startup_sound_volume = 35
+
+# Minimize to the system tray when a StatusNotifierItem host exists.
+tray_enabled = true
+
+# Reduced motion: leave unset to follow NIRUX, or true / false.
+# reduced_motion = true
+
+# Show the remaining instead of the elapsed time in the LED clock.
+remaining_time = false
+
+# The panel shown at start: playlist, queue, browse, settings or about.
+active_tab = "playlist"
+playlist_visible = true
+window_shade = false
+
+# The NPLAY executable NIRUAMP starts when no service is running.
+nplay_bin = "nplay"

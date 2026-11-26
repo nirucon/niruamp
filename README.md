@@ -4,7 +4,11 @@ Winamp-inspired graphical frontend for NPLAY, written in Rust.
 
 **Status: alpha** · Part of the [NIRUX](https://github.com/nirucon/nirux) suite · [MIT License](LICENSE)
 
-![NIRUAMP](docs/screenshots/main.png)
+![NIRUAMP, Classic skin](docs/screenshots/main.png)
+
+| Phosphor | Hi-Fi Deck |
+|---|---|
+| ![Phosphor skin](docs/screenshots/skin-phosphor.png) | ![Hi-Fi Deck skin](docs/screenshots/skin-hifi.png) |
 
 More screenshots: [light theme](docs/screenshots/main-light.png),
 [search](docs/screenshots/search.png), [settings](docs/screenshots/settings.png),
@@ -14,8 +18,9 @@ More screenshots: [light theme](docs/screenshots/main-light.png),
 
 NIRUAMP is the classic, compact player window I missed: a hardware-panel deck,
 LED time, spectrum display and a dense playlist, in the spirit of Winamp but
-with original vector artwork and live NIRUX theming. It is not affiliated
-with Winamp.
+with original vector artwork and live NIRUX theming. Three original skins
+(Classic, Phosphor and Hi-Fi Deck) all take their colours from the current
+theme. It is not affiliated with Winamp.
 
 **NIRUAMP is a frontend only and cannot run without
 [NPLAY](https://github.com/nirucon/nplay).** NPLAY owns playback, queue,
@@ -31,15 +36,24 @@ about 15 ms, and no CPU at all while nothing changes.
 
 ## Features
 
-- Winamp-style deck: LED clock, seek and volume, transport, shuffle/repeat,
-  attached playlist and queue panels, windowshade mode, always-on-top, a
-  compact title bar and remembered geometry.
+- Winamp-style deck: LED clock, seek and volume, transport, shuffle/repeat
+  lamps, attached playlist and queue panels, windowshade mode,
+  always-on-top, a compact title bar and remembered geometry.
+- Three skins, switched with `K`, the skin button or Settings and
+  remembered: **Classic** (the hardware panel), **Phosphor** (a green CRT
+  operator console with scanlines and a glowing seven-segment clock) and
+  **Hi-Fi Deck** (a brushed-metal cassette deck with a tape window, a VFD
+  analyser and two analogue VU meters). All three follow the theme's accent
+  and foreground, and are drawn in code: no bitmaps from other products.
 - Fullscreen visual mode (`F11`): black screen, centred track, artist and
   album, themed CAVA bars and progress.
 - Real CAVA visualization at up to 30 fps (30/20/15 in Settings), pushed by
   NPLAY 1.8's visualization stream; it pauses (and NPLAY stops CAVA) while
-  the window is hidden, covered, minimized or in the tray. No fake bars: a
-  clear "unavailable" state otherwise.
+  the window is hidden, covered, minimized or in the tray. Levels are shown
+  on a decibel scale around a slowly adapting reference, so quiet and loud
+  masters both fill the display without pinning at the top; bars fall with
+  gravity and leave short-lived peak caps. No fake bars: a clear
+  "unavailable" state otherwise.
 - Async federated search across local music, Navidrome, Sveriges Radio,
   YouTube, Spotify and custom radio, with stale-result protection.
 - Browse artists, albums, folders, playlists, favorites, history, radio,
@@ -54,7 +68,9 @@ about 15 ms, and no CPU at all while nothing changes.
 - Frugal: one frame scheduler, only the changed part of the window is
   redrawn, nothing at all while idle or hidden, no polling threads; measured
   below and in [docs/VALIDATION.md](docs/VALIDATION.md).
-- Optional Winamp-inspired startup sound (embedded, can be disabled).
+- A short welcome sound on the first start after login, at 35 % by default
+  (Settings: off, 20, 35, 50, 75 or 100 %); later starts in the same login
+  are silent.
 
 ## Requirements
 
@@ -143,6 +159,7 @@ nplay --serve --service-socket /path/to/socket --idle-exit 25
 | `+` / `-` / `M` | Volume / mute |
 | `R` / `H` | Repeat / shuffle |
 | `V` | Visualization on / off |
+| `K` | Next skin (Classic, Phosphor, Hi-Fi Deck) |
 | `/` or `Ctrl+F` | Search |
 | `B` | Browse |
 | `F` | Favorite the current track |
@@ -163,10 +180,24 @@ exists; left-click the tray icon to restore.
 ## Configuration
 
 Settings are changed in the app (`4` or the settings tab) and saved to
-`~/.config/niruamp/config.toml`: theme, scale, always-on-top, keep playing,
-visualization on/off and frame rate, pausing the hidden visualization,
-startup sound, tray, reduced motion, remaining time, and the `nplay_bin` to
-start (the NPLAY executable, default `nplay`).
+`~/.config/niruamp/config.toml`: theme, skin, scale, always-on-top, keep
+playing, visualization on/off and frame rate, pausing the hidden
+visualization, the welcome sound and its level, tray, reduced motion,
+remaining time, and the `nplay_bin` to start (the NPLAY executable, default
+`nplay`). [config.example.toml](config.example.toml) lists every key with
+its default.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `skin` | `"classic"` | `classic`, `phosphor` or `hifi` |
+| `startup_sound` | `true` | Play the welcome sound on the first start after login |
+| `startup_sound_volume` | `35` | Its level, percent of full scale (1 to 100) |
+
+The welcome sound remembers that it has played in
+`$XDG_RUNTIME_DIR/niruamp/welcome-played`, which goes away at logout. It is
+played by `pw-play`, `paplay`, `ffplay` or `mpv`, whichever is found first,
+at the same loudness in each (`paplay` and `mpv` use a cubic volume scale and
+get the matching value).
 
 With **Theme → Auto** the palette comes from NIRUX (`~/.config/niruwm/config.toml`,
 custom `~/.config/niruwm/themes/NAME.toml`, `appearance.toml` overrides) or,
@@ -179,8 +210,8 @@ Environment variables:
 |---|---|
 | `NPLAY_SERVICE_SOCKET=PATH` | Connect to an existing NPLAY control socket |
 | `NPLAY_DEV_PATH=/path/to/nplay` | Use an NPLAY source checkout instead of the installed one |
-| `NIRUAMP_SKIP_STARTUP_SOUND` | Skip the startup sound (any value) |
-| `NIRUAMP_DEBUG_FPS` | Print frames/s and NPLAY messages/s every 5 s |
+| `NIRUAMP_SKIP_STARTUP_SOUND` | Never play the welcome sound (any value) |
+| `NIRUAMP_DEBUG_FPS` | Print frames/s, NPLAY messages/s and repainted pixels every 5 s |
 | `NIRUAMP_TIMING` | Print the time to the first frame |
 | `NIRUAMP_SCREENSHOT=PATH` | Save a PNG of the window (`NIRUAMP_SCREENSHOT_DELAY` seconds after start) |
 | `NIRUAMP_NO_SHM` | Present with `PutImage` instead of MIT-SHM |
@@ -194,6 +225,7 @@ Environment variables:
 | `~/.local/share/icons/hicolor/scalable/apps/niruamp.svg` | Icon |
 | `~/.config/niruamp/config.toml` | Preferences |
 | `~/.local/state/niruamp/window.toml` | Window geometry and state |
+| `$XDG_RUNTIME_DIR/niruamp/welcome-played` | The welcome sound has played in this login |
 | `$XDG_RUNTIME_DIR/nplay/control.sock` | NPLAY control service socket |
 
 Navidrome and Spotify credentials stay in NPLAY's `0600` secrets file; NIRUAMP
@@ -215,7 +247,9 @@ never reads or displays them.
 Known limits:
 
 - No equalizer (NPLAY has no EQ DSP for mpv, and Spotify does not go through
-  mpv), and no `.wsz` skins.
+  mpv), and no `.wsz` skins: the three built-in skins are drawn in code.
+- CAVA's output is mono, so the Hi-Fi Deck's two VU meters show the low and
+  high halves of the spectrum, not left and right.
 - Live radio cannot seek; some source-specific operations are backend limits
   and show as disabled.
 
@@ -234,6 +268,18 @@ and CAVA harness, 30 fps spectrum), `tests/xvfb.sh` and a sampling script:
 | CPU, window on another workspace | 0 % | 0 % |
 
 On real hardware 0.5.2 measured 124 MB, about 85 MB of it GL mappings.
+
+0.7.0 per skin, measured in a private Xvfb with NPLAY 2.0.1 and real CAVA
+fed by a test track (30 fps spectrum, one core):
+
+| | Classic | Phosphor | Hi-Fi Deck |
+|---|---|---|---|
+| CPU, playing with the spectrum | 3.6 to 3.9 % (0.6.0: 3.9 to 4.0 %) | 5.8 % | 7.5 % |
+| CPU, paused, silent or hidden | 0 % | 0 % | 0 % |
+| Memory (RSS) | 11 MB | 11 MB | 13 MB |
+
+Only the parts that moved are repainted (the bars, the needles, the reels);
+the skin textures are generated once per size.
 
 ## Uninstall
 

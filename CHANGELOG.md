@@ -1,3 +1,65 @@
+# NIRUAMP 0.7.0
+
+Skins, livelier spectrum levels, a quieter welcome sound and a UX pass.
+
+- **Skins.** Three original skins, all drawn in code and coloured by the
+  current NIRUX (or Omarchy) theme's accent and foreground:
+  - **Classic**, the hardware panel, polished: a soft panel gradient, a
+    larger LED clock and spectrum, three-zone bars with peak caps, and
+    shuffle/repeat lamps beside the transport.
+  - **Phosphor**, a green CRT operator console: scanlines, a vignette and
+    glass sheen over the tube, a glowing seven-segment clock, a monochrome
+    cover and a monospaced readout.
+  - **Hi-Fi Deck**, a 1980s stereo rack: brushed metal, a cassette in a
+    smoked window with the track on its label and reels that follow the
+    position, a VFD clock with a 16-band analyser, and two analogue VU meters
+    (the low and high halves of the spectrum; CAVA is mono).
+  Switch with `K`, the new skin button in the deck (where the always disabled
+  equalizer button was) or Settings → Appearance → Skin; saved as `skin`.
+- **Spectrum levels.** CAVA's autosens scales to the loudest bar, which left
+  most bars near the floor. NIRUAMP now shows a decibel scale around a slowly
+  adapting reference (fast up, slow down, frozen in silence) with a soft knee
+  at the top, so quiet and loud masters look alike and nothing pins. Bars
+  fall with gravity and leave peak caps that hold briefly. Measured with real
+  CAVA (NPLAY's configuration) on four test tracks from -28 to -8 LUFS: the
+  median bar height went from 0.24 to 0.34 of the display to 0.35 to 0.57
+  (0.48 to 0.57 for full mixes), the 90th percentile from 0.56 to 0.76 to
+  0.79 to 0.81, and bars at the very top from up to 6.4 % to at most 0.5 %.
+- **Welcome sound.** 35 % by default instead of 65 % (and `paplay` got no
+  volume at all before), at the same loudness in `pw-play`, `paplay`,
+  `ffplay` and `mpv`. It plays only on the first NIRUAMP start after login
+  (a marker in `$XDG_RUNTIME_DIR/niruamp`). Settings → Appearance → Welcome
+  sound: Off, 20, 35, 50, 75 or 100 %, with TRY to preview. New key
+  `startup_sound_volume`.
+- **UX fixes.**
+  - The windowshade button in the title strip did nothing; it works now.
+  - The mute button can be activated with Enter like the other controls.
+  - `B`, `/` and `Ctrl+F` opened an empty Browse panel on first use; they
+    load the landing list now. `Esc` back to the playlist is remembered.
+  - Themes with a grey focus colour (Niru Noir) made the playing row look
+    disabled; the accent is raised until it reads, and the playing title
+    only takes the accent where that is brighter than secondary text.
+  - The lowercase "playing · OFF · OFF" line beside the transport is
+    replaced by SHUFFLE and REPEAT lamps (REPEAT ONE / ALL).
+  - Windowshade: the play button shows pause while playing, a previous
+    button was added, and toasts no longer cover the strip.
+  - Queue: PLAY, REMOVE, CLEAR and SAVE are disabled on an empty queue, and
+    the redundant QUEUE button is gone from the queue itself.
+  - The footer hint no longer runs under the NPLAY version in a narrow
+    window, and lists `K` and `F11`; the version drops the protocol and
+    revision noise (still in Settings → System).
+  - Settings rows wrap instead of clipping; tooltips name their keys.
+  - The About page lists the skins and the full keyboard.
+- **Frugal.** Damage is now a few separate rects (a reel, an analyser and a
+  needle no longer repaint everything between them), shape counts stay
+  constant per frame, bars snap to whole pixels, skin textures are generated
+  once per size. Playing with the spectrum: Classic 3.6 to 3.9 % of a core in
+  Xvfb (0.6.0: 3.9 to 4.0 %), Phosphor 5.8 %, Hi-Fi Deck 7.5 %; paused,
+  silent or hidden 0 %. `NIRUAMP_DEBUG_FPS` also prints the repainted pixels
+  and paint time.
+- New `config.example.toml` with every key and its default (a test keeps it
+  in step with the code).
+
 # NIRUAMP 0.6.0
 
 A rewrite of the drawing layer: egui, eframe, winit and OpenGL are gone.
@@ -97,7 +159,7 @@ Efficiency and build release. The look, themes, views and keys are unchanged.
   retries are reduced to one repaint deadline per frame, NPLAY messages wake the
   window once per frame, and egui's predicted-frame-time subtraction no longer
   turns a 33 ms step into bursts. Playing with the spectrum visible draws about
-  30 frames/s instead of 56–170.
+  30 frames/s instead of 56 to 170.
 - With NPLAY 1.8.0 the spectrum uses `visualization.subscribe` (b64 frames
   pushed by NPLAY) instead of polling `visualization.data` 30 times a second.
   During silence NIRUAMP draws a flat spectrum and stops animating. NPLAY 1.7.x

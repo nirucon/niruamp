@@ -311,6 +311,8 @@ CPU (of 24), not the much higher software-GL/Xvfb figure.
 | `docs/screenshots/search.png` | Async search results with Play all/Queue all |
 | `docs/screenshots/settings.png` | Appearance/playback/source settings, live theme source |
 | `docs/screenshots/windowshade.png` | Compact 620×58 windowshade |
+| `docs/screenshots/skin-phosphor.png` | 0.7 Phosphor skin, Nord theme, real CAVA levels |
+| `docs/screenshots/skin-hifi.png` | 0.7 Hi-Fi Deck skin, Nord theme, cassette, VFD analyser, VU meters |
 | `docs/screenshots/dependency-error.png` | NPLAY missing dependency remedy |
 | `docs/screenshots/visualization-harness.png` | **Synthetic CAVA harness only**; verifies bars/refresh/disabled-state drawing, not audio capture |
 
@@ -446,3 +448,39 @@ The fake CAVA keeps producing bars while paused, so "paused" with the
 spectrum on costs the same as playing in this harness; with real CAVA a
 paused player is silent and NIRUAMP draws nothing. `tests/xvfb.sh` passes on
 othala with both the glibc and the static musl build.
+
+## 0.7.0 (skins, spectrum levels, welcome sound), 2026-11-26
+
+Measured on yggdrasil in a private Xvfb with HOME and all XDG directories in
+temporary directories, a sandboxed NPLAY 2.0.1, `tools/fake-mpv`, and the
+real CAVA 0.7.4 with NPLAY's exact configuration whose input was switched to
+a FIFO fed by `ffmpeg -re` from generated test tracks (no audio server, no
+sound on the machine's speakers).
+
+Spectrum levels, four tracks (a full mix at -13.9 LUFS, the same mix
+compressed and limited to -8.4 LUFS, turned down to -27.9 LUFS, and a sparse
+pad at -22.7 LUFS), height as a fraction of the display, 30 fps, 32 bars:
+
+| Track | 0.6.0 p10 / p50 / p90, at top | 0.7.0 p10 / p50 / p90, at top |
+|---|---|---|
+| Full mix | 0.15 / 0.27 / 0.66, 3.9 % | 0.17 / 0.50 / 0.81, 0.5 % |
+| Loud master | 0.20 / 0.34 / 0.76, 6.4 % | 0.30 / 0.57 / 0.81, 0.3 % |
+| Quiet master | 0.14 / 0.26 / 0.56, 0.7 % | 0.15 / 0.48 / 0.80, 0.5 % |
+| Sparse pad | 0.06 / 0.24 / 0.68, 1.4 % | 0.03 / 0.35 / 0.79, 0.0 % |
+
+"At top" is the share of bars at 95 % or more. 0.6.0 drew a 6 % floor under
+every bar, so its p10 is not comparable; the sparse pad keeps its empty bands
+near zero in 0.7.0, as it should.
+
+CPU of one core, playing with the 30 fps spectrum (release build, same
+sandbox for both versions):
+
+| | 0.6.0 | 0.7.0 Classic | 0.7.0 Phosphor | 0.7.0 Hi-Fi Deck |
+|---|---|---|---|---|
+| Playing, spectrum visible | 3.9 to 4.0 % | 3.6 to 3.9 % | 5.8 % | 7.5 % |
+| Playing a silent track | n/a | 0.0 % | 0.8 % | 1.2 % (reels turn once a second) |
+| Paused | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+| Stopped / idle | 0.0 % | 0.0 % | 0.0 % | 0.0 % |
+| RSS | 10.8 MB | 10.8 MB | 11.5 MB | 12.7 MB |
+
+`tests/xvfb.sh` passes with NPLAY 2.0.1 (unmapped: 0.00 % CPU).

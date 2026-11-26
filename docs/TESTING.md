@@ -28,8 +28,24 @@ local-authorization capabilities and `service.error` parsing, and the
 not-authorized error → AUTHORIZE dialog decision (hidden without the
 capability).
 
-Energy: run with `NIRUAMP_DEBUG_FPS=1` to print frames/s and NPLAY messages/s
-every 5 s; `scripts/measure.py` samples CPU and RSS.
+Energy: run with `NIRUAMP_DEBUG_FPS=1` to print frames/s, NPLAY messages/s and
+the repainted pixels and paint time per frame every 5 s; `scripts/measure.py`
+samples CPU and RSS.
+
+Spectrum levels (0.7): `src/spectrum.rs` has unit tests for the leveler (quiet
+and loud material reach the same typical height, loud frames are compressed
+below the top, silence keeps the reference) and the gravity/peak-cap bars
+(accelerating fall, cap hold, settling). An ignored test prints the before/after
+height percentiles for raw CAVA captures (32 bars, 8-bit):
+
+```sh
+NIRUAMP_VIS_CAPTURES="/abs/quiet.cava /abs/loud.cava" \
+  cargo test spectrum_report -- --ignored --nocapture
+```
+
+Captures can be made without an audio server: run `cava` with NPLAY's
+configuration plus `[input] method = fifo` and feed it a track with
+`ffmpeg -re -i TRACK -f s16le -ac 2 -ar 44100 - > FIFO`.
 
 The NPLAY suite (1.7.1+) covers the existing player/providers/statistics/theme tests plus
 the control service: handshake and capability discovery, protocol rejection,
@@ -124,8 +140,13 @@ Useful checks:
     and exercise play/pause, next/previous and quit from the tray menu. Without a
     tray host, minimize must fall back to a normal minimized window. Change the
     NIRUX theme and verify the tray icon colours follow it.
-12. Launch with the startup sound enabled and verify one short sound; disable it
-    under Settings → Appearance and verify the next launch is silent.
+12. Log in, launch with the welcome sound on and verify one short, quiet sound
+    (35 %); quit and launch again and verify silence until the next login.
+    Settings → Appearance → Welcome sound → Off silences it; TRY previews the
+    chosen level.
+13. Press `K` three times: Classic, Phosphor, Hi-Fi Deck and back; restart and
+    verify the skin is kept. Change the NIRUX theme and verify all three skins
+    follow its accent.
 7. Stop NPLAY (`kill` the service) and verify the connection-lost screen;
    press Retry and verify a fresh service connects.
 8. Launch `niruamp` a second time; verify the first window is activated and no

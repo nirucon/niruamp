@@ -37,7 +37,9 @@ NIRUAMP can attach to the same service. NPLAY remains fully standalone.
 | `model.rs` | Typed wire models (tracks, playback, browse/search/settings) |
 | `config.rs` | NIRUAMP preferences and window state in XDG directories (0600, atomic) |
 | `theme.rs` | NIRUX appearance resolution, builtin/custom themes, font/spacing, watcher |
-| `views/deck.rs` | Title strip, artwork, LED clock, spectrum, seek/volume, transport, shade |
+| `views/deck.rs` | Title strip, artwork, LED clock, spectrum, seek/volume, transport, shade, per skin |
+| `skin.rs` | Skins (Classic, Phosphor, Hi-Fi Deck): palette transforms from the theme, cached textures, VU meter, cassette |
+| `spectrum.rs` | CAVA levels for display: decibel leveler with a slow reference, gravity fall, peak caps |
 | `views/playlist.rs` | Dense rows, playlist/queue panels, context menus |
 | `views/browser.rs` | Async search, source sections, landing and result lists |
 | `views/settings.rs` | Appearance/playback/source/library/system settings, about |
@@ -88,7 +90,9 @@ selection or steal text focus.
   position is interpolated locally between authoritative samples.
 - Visualization: NPLAY 1.8's push stream (`visualization.subscribe`, b64) or,
   with NPLAY 1.7, polls at the same rate; at most 30 fps (Settings: 30/20/15,
-  reduced motion 8), fast-attack/slow-release easing that settles and stops on
+  reduced motion 8), levelled by `src/spectrum.rs` (a decibel scale around a slowly
+  tracked 85th-percentile reference, soft knee near the top), fast attack,
+  gravity fall and peak caps that settle and stop on
   a flat spectrum. The spectrum stops (unsubscribe/stop, so NPLAY stops CAVA)
   when disabled, minimized, in the tray, or when the window cannot be seen:
   `src/visibility.rs` watches Map/Unmap, `_NET_WM_STATE_HIDDEN` and
@@ -169,19 +173,36 @@ NIRUX colour overrides.
 - Credentials/OAuth live only in NPLAY's 0600 secrets file and never appear in
   protocol responses, logs or the GUI.
 
-## Startup sound
+## Welcome sound
 
-The optional startup sound is a one-shot UI effect, not media. The Ogg Vorbis
+The optional welcome sound is a one-shot UI effect, not media. The Ogg Vorbis
 asset is embedded in the frontend, written once to the user cache and played by
-`pw-play`, `paplay`, `ffplay` or `mpv` for its short duration. It never enters
-NPLAY's queue, statistics, MPRIS or playback state and can be disabled in
-Settings. This avoids introducing a second media engine or a persistent audio
-helper.
+`pw-play`, `paplay`, `ffplay` or `mpv` for its short duration, at
+`startup_sound_volume` percent (35 by default; `paplay` and `mpv` get the cube
+root because their volume scale is cubic, so every player sounds the same). It
+plays on the first start after login only: `$XDG_RUNTIME_DIR/niruamp/welcome-played`
+holds the boot id and `XDG_SESSION_ID` it played in. It never enters NPLAY's
+queue, statistics, MPRIS or playback state and can be turned off in Settings.
+This avoids introducing a second media engine or a persistent audio helper.
+
+## Skins
+
+A skin is a palette transform plus deck drawing. `Skin::palette` derives the
+whole window's palette from the resolved theme: Classic keeps it, Phosphor
+builds a green CRT palette whose phosphor is pulled toward a colourful theme
+accent (a grey accent leaves it green) with the accent for highlights, and
+Hi-Fi Deck uses graphite panels with the theme accent for lamps and a VFD
+colour tinted the same way. The deck layout and heights are the same in every
+skin; only the display and the housing differ. Textures (brushed metal at the
+deck's size, the CRT glass at the tube's size) are generated once and kept in
+a small cache; gradients are drawn as whole-pixel bands. Animated parts keep a
+constant number of shapes per frame, and `gui::damage_rects` repaints only the
+rects that changed, so an idle or paused deck draws nothing.
 
 ## Deliberate tradeoffs
 
 - No fake equalizer and no `.wsz` skins: both would displace real functionality
-  or theme integration without improving recognizability.
+  or theme integration. The built-in skins are original and theme-coloured.
 - Spotify remains a Connect transport; EQ/ReplayGain/seek semantics are those
   NPLAY supports. Disabled states are exposed instead of pretending.
 - Local playlists/favorites/ratings reuse NPLAY's SQLite store so terminal and

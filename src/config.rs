@@ -248,4 +248,15 @@ mod tests {
         assert_eq!(prefs.startup_sound_volume, 35);
         assert_eq!(prefs.skin, "classic");
     }
+
+    #[test]
+    fn config_example_matches_the_defaults() {
+        let text = include_str!("../config.example.toml");
+        let example: Preferences = toml::from_str(text).unwrap();
+        let defaults = Preferences::default();
+        assert_eq!(
+            toml::to_string(&example).unwrap(),
+            toml::to_string(&defaults).unwrap()
+        );
+    }
 }
