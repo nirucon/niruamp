@@ -1,3 +1,15 @@
+# NIRUAMP 0.7.1
+
+- **The clock follows the music.** The LED clock counts on locally between
+  NPLAY's messages. After a track change it could start at the previous
+  track's position (fixed in NPLAY 2.0.2) or run ahead while a stream still
+  buffered. NIRUAMP now checks the position with NPLAY 1.5 seconds after a
+  track change and every 10 seconds while playing, and takes NPLAY's value.
+- **Hi-Fi Deck VU meters fill their faces.** The scale was sized by the width
+  only, so a tall face had a large empty area above it. The arc, numbers and
+  needle now use the whole face, with the pivot hub and the LOW/HIGH label
+  below the needle, and the meter stays centred when the window is resized.
+
 # NIRUAMP 0.7.0
 
 Skins, livelier spectrum levels, a quieter welcome sound and a UX pass.

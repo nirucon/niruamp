@@ -287,22 +287,47 @@ impl Default for ArtworkStore {
     }
 }
 
+/// The clock is checked against NPLAY this long after a track change ...
+const RESYNC_AFTER_CHANGE: Duration = Duration::from_millis(1500);
+/// ... and then this often while playing.
+const RESYNC_EVERY: Duration = Duration::from_secs(10);
+
 pub(crate) enum PendingKind {
-    Search { generation: u64, query: String },
-    Browse { generation: u64 },
+    Search {
+        generation: u64,
+        query: String,
+    },
+    Browse {
+        generation: u64,
+    },
     Playlists,
-    PlaylistTracks { id: i64, name: String },
+    PlaylistTracks {
+        id: i64,
+        name: String,
+    },
     Settings,
-    Artwork { key: String },
+    Artwork {
+        key: String,
+    },
     VisStart,
     VisSubscribe,
     VisData,
     Play,
     Snapshot,
+    /// A position check against NPLAY while playing (see `maybe_resync`).
+    Resync,
     Devices,
-    PlaylistCreated { tracks: Vec<Track> },
-    Expansion { action: ExpandAction, label: String },
-    Generic { label: String, quiet: bool },
+    PlaylistCreated {
+        tracks: Vec<Track>,
+    },
+    Expansion {
+        action: ExpandAction,
+        label: String,
+    },
+    Generic {
+        label: String,
+        quiet: bool,
+    },
     SpotifyLocalAuth,
 }
 
@@ -344,6 +369,9 @@ pub struct NiruampApp {
     pub(crate) spotify_local_authorizing: bool,
     pub(crate) revision: u64,
     pub(crate) received_at: Instant,
+    /// When the clock is next checked against NPLAY's real position.
+    pub(crate) resync_at: Option<Instant>,
+    pub(crate) resync_inflight: bool,
     pub(crate) pending: HashMap<u64, Pending>,
     pub(crate) tab: Tab,
     pub(crate) playlist_selected: usize,
@@ -482,6 +510,8 @@ impl NiruampApp {
             spotify_local_authorizing: false,
             revision: 0,
             received_at: Instant::now(),
+            resync_at: None,
+            resync_inflight: false,
             pending: HashMap::new(),
             tab,
             playlist_selected: 0,
@@ -592,6 +622,43 @@ impl NiruampApp {
         self.vis.retry_at = None;
         self.update_artwork(ctx);
         self.clamp_selection();
+    }
+
+    /// While playing, check the clock against NPLAY's real position: shortly
+    /// after a track change (a stream may still buffer when the change is
+    /// announced) and then every `RESYNC_EVERY`. The LED clock counts on
+    /// locally between NPLAY's messages, so without this a stall or a late
+    /// start would leave it ahead of the music.
+    fn maybe_resync(&mut self) {
+        if !self.playback.is_playing() || self.resync_inflight || self.scrub.is_some() {
+            return;
+        }
+        let now = Instant::now();
+        let due = *self.resync_at.get_or_insert(now + RESYNC_EVERY);
+        if now < due {
+            return;
+        }
+        self.resync_at = Some(now + RESYNC_EVERY);
+        self.resync_inflight = true;
+        self.request("state.snapshot", json!({}), Some(PendingKind::Resync));
+    }
+
+    /// Take the position from a resync answer when it is about the same
+    /// track and not older than what is shown; anything else (a new track,
+    /// a newer event) is left to the state events.
+    pub(crate) fn apply_resync(&mut self, fresh: &Playback, revision: u64) {
+        if revision < self.revision
+            || self.scrub.is_some()
+            || fresh.current_key() != self.playback.current_key()
+        {
+            return;
+        }
+        self.playback.position = fresh.position;
+        self.playback.status = fresh.status.clone();
+        if fresh.duration > 0.0 {
+            self.playback.duration = fresh.duration;
+        }
+        self.received_at = Instant::now();
     }
 
     fn clamp_selection(&mut self) {
@@ -839,6 +906,7 @@ impl NiruampApp {
             }
         }
         self.maybe_visualization(ctx);
+        self.maybe_resync();
         self.tick_geometry(ctx);
         self.frame_count += 1;
     }
@@ -857,6 +925,8 @@ impl NiruampApp {
                         if previous_key != self.playback.current_key().map(str::to_string) {
                             self.vis.failed.clear();
                             self.vis.retry_at = None;
+                            // A new track: check the clock once its stream runs.
+                            self.resync_at = Some(Instant::now() + RESYNC_AFTER_CHANGE);
                         }
                         if !change.sources.is_empty() {
                             self.sources = change.sources;
@@ -1081,6 +1151,12 @@ impl NiruampApp {
                     self.apply_snapshot(snap, ctx);
                 }
             }
+            (PendingKind::Resync, Ok(value)) => {
+                self.resync_inflight = false;
+                if let Ok(snap) = serde_json::from_value::<Snapshot>(value) {
+                    self.apply_resync(&snap.playback, snap.revision);
+                }
+            }
             (PendingKind::Devices, Ok(value)) => {
                 if let Ok(response) = serde_json::from_value::<BrowseResponse>(value) {
                     self.browser.items = response.items;
@@ -1177,6 +1253,10 @@ impl NiruampApp {
                         "Playlist unavailable".to_string()
                     }
                     PendingKind::Snapshot => "State refresh failed".to_string(),
+                    PendingKind::Resync => {
+                        self.resync_inflight = false;
+                        String::new()
+                    }
                     PendingKind::Devices => "Spotify devices unavailable".to_string(),
                     PendingKind::PlaylistCreated { .. } => "Playlist creation failed".to_string(),
                     PendingKind::Expansion { label, .. } => format!("{label} unavailable"),

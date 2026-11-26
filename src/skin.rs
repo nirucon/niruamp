@@ -420,16 +420,26 @@ pub fn vu_meter(painter: &Painter, rect: Rect, level: f32, label: &str, p: &Pale
     gradient_bands(painter, face, face_top, face_bottom);
     let ink = Color32::from_rgb(40, 34, 28);
     let red = Color32::from_rgb(196, 52, 40);
-    let radius = (face.height() * 0.92).min(face.width() * 0.66);
-    let pivot = pos2(face.center().x, face.bottom() + radius * 0.33);
-    let angle = |v: f32| (-46.0 + 92.0 * v.clamp(0.0, 1.0)).to_radians();
+    // Size the scale to the face: the arc and its numbers reach the sides and
+    // the top, the pivot sits low with the labels around it, and a face with
+    // room to spare keeps the whole meter centred instead of empty above.
+    let sweep = 50.0_f32;
+    let angle = |v: f32| (-sweep + 2.0 * sweep * v.clamp(0.0, 1.0)).to_radians();
+    // dB relative to 0 VU on the display scale: 36 dB span, 0 VU at 0.8.
+    let db = |d: f32| 0.8 + d / 36.0;
+    let numbers = 11.0; // the numbers sit outside the arc
+    let widest = angle(db(-20.0)).sin().abs().max(angle(db(3.0)).sin().abs());
+    let by_width = (face.width() * 0.5 - numbers - 3.0) / widest;
+    let below = 16.0; // pivot hub and the label under it
+    let by_height = face.height() - numbers - 5.0 - below;
+    let arc_r = by_width.min(by_height).max(8.0);
+    let used = numbers + arc_r + below;
+    let top = face.top() + 5.0 + ((face.height() - 5.0 - used) * 0.5).max(0.0);
+    let pivot = pos2(face.center().x, top + numbers + arc_r);
     let at = |v: f32, r: f32| {
         let a = angle(v);
         pos2(pivot.x + r * a.sin(), pivot.y - r * a.cos())
     };
-    // dB relative to 0 VU on the display scale: 36 dB span, 0 VU at 0.8.
-    let db = |d: f32| 0.8 + d / 36.0;
-    let arc_r = radius * 0.74;
     let steps = 24;
     let mut arc = Vec::with_capacity(steps + 1);
     for i in 0..=steps {
@@ -473,14 +483,14 @@ pub fn vu_meter(painter: &Painter, rect: Rect, level: f32, label: &str, p: &Pale
         }
     }
     painter.text(
-        pos2(face.center().x, face.bottom() - face.height() * 0.36),
+        pos2(pivot.x, pivot.y - arc_r * 0.42),
         Align2::CENTER_CENTER,
         "VU",
-        FontId::proportional(9.0),
+        FontId::proportional((arc_r * 0.2).clamp(9.0, 15.0)),
         ink,
     );
     painter.text(
-        pos2(face.center().x, face.bottom() - face.height() * 0.20),
+        pos2(pivot.x, pivot.y + below * 0.62),
         Align2::CENTER_CENTER,
         label,
         FontId::proportional(6.5),
@@ -488,7 +498,7 @@ pub fn vu_meter(painter: &Painter, rect: Rect, level: f32, label: &str, p: &Pale
     );
     // Needle, clipped to the face, with a small shadow.
     let clipped = painter.with_clip_rect(face);
-    let tip = at(level, radius * 0.93);
+    let tip = at(level, arc_r + 3.0);
     clipped.line_segment(
         [pivot + vec2(1.2, 0.0), tip + vec2(1.2, 1.0)],
         Stroke::new(1.2, alpha(Color32::BLACK, 0.18)),
@@ -497,12 +507,9 @@ pub fn vu_meter(painter: &Painter, rect: Rect, level: f32, label: &str, p: &Pale
         [pivot, tip],
         Stroke::new(1.2, Color32::from_rgb(25, 22, 20)),
     );
-    // The pivot cover at the bottom edge.
-    painter.rect_filled(
-        Rect::from_min_max(pos2(face.left(), face.bottom() - 5.0), face.right_bottom()),
-        Rounding::ZERO,
-        Color32::from_rgb(34, 32, 30),
-    );
+    // The pivot hub.
+    painter.circle_filled(pivot, 3.5, Color32::from_rgb(34, 32, 30));
+    painter.circle_filled(pivot, 1.3, alpha(Color32::WHITE, 0.25));
     // A faint glass reflection.
     painter.rect_filled(
         Rect::from_min_max(
