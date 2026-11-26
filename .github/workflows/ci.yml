@@ -26,9 +26,14 @@ jobs:
         run: cargo build --release --locked
       - name: End-to-end GUI test against NPLAY
         run: |
-          git clone --quiet --depth 1 --branch v1.8.2 https://github.com/nirucon/nplay "$RUNNER_TEMP/nplay"
-          printf '#!/bin/sh\nPYTHONPATH=%s exec python3 -m nplay.app "$@"\n' "$RUNNER_TEMP/nplay" > "$RUNNER_TEMP/nplay-run"
-          chmod +x "$RUNNER_TEMP/nplay-run"
+          # NPLAY 2 is a single static binary; fetch the released one and check it.
+          mkdir -p "$RUNNER_TEMP/nplay"
+          base=https://github.com/nirucon/nplay/releases/download/v2.0.1
+          curl -fsSL -o "$RUNNER_TEMP/nplay/nplay" "$base/nplay"
+          curl -fsSL -o "$RUNNER_TEMP/nplay/SHA256SUMS" "$base/SHA256SUMS"
+          (cd "$RUNNER_TEMP/nplay" && grep ' nplay$' SHA256SUMS | sha256sum -c -)
+          chmod +x "$RUNNER_TEMP/nplay/nplay"
+          ln -sf "$RUNNER_TEMP/nplay/nplay" "$RUNNER_TEMP/nplay-run"
           NIRUAMP_TEST_DISPLAY=99 sh tests/xvfb.sh target/release/niruamp "$RUNNER_TEMP/nplay-run"
 
   msrv:

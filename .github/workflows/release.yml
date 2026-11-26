@@ -36,9 +36,14 @@ jobs:
           B=target/x86_64-unknown-linux-musl/release/niruamp
           $B --version | grep -qx "NIRUAMP $VERSION"
           if ldd $B 2>&1 | grep -q '=>'; then echo "::error::niruamp is dynamically linked"; exit 1; fi
-          git clone --quiet --depth 1 --branch v1.8.2 https://github.com/nirucon/nplay "$RUNNER_TEMP/nplay"
-          printf '#!/bin/sh\nPYTHONPATH=%s exec python3 -m nplay.app "$@"\n' "$RUNNER_TEMP/nplay" > "$RUNNER_TEMP/nplay-run"
-          chmod +x "$RUNNER_TEMP/nplay-run"
+          # NPLAY 2 is a single static binary; fetch the released one and check it.
+          mkdir -p "$RUNNER_TEMP/nplay"
+          base=https://github.com/nirucon/nplay/releases/download/v2.0.1
+          curl -fsSL -o "$RUNNER_TEMP/nplay/nplay" "$base/nplay"
+          curl -fsSL -o "$RUNNER_TEMP/nplay/SHA256SUMS" "$base/SHA256SUMS"
+          (cd "$RUNNER_TEMP/nplay" && grep ' nplay$' SHA256SUMS | sha256sum -c -)
+          chmod +x "$RUNNER_TEMP/nplay/nplay"
+          ln -sf "$RUNNER_TEMP/nplay/nplay" "$RUNNER_TEMP/nplay-run"
           NIRUAMP_TEST_DISPLAY=99 sh tests/xvfb.sh $B "$RUNNER_TEMP/nplay-run"
       - name: Package
         run: |
