@@ -888,7 +888,14 @@ impl Shape {
 /// Equal leading and trailing shapes are skipped; a middle of equal length
 /// is compared pairwise, otherwise all of it counts (a spectrum whose number
 /// of highlight lines changed still only damages the spectrum).
-pub fn damage(prev: &[ClippedShape], cur: &[ClippedShape], full: Rect) -> Option<Rect> {
+/// The areas that differ between two frames, as a few whole-pixel rects.
+/// Changes far apart (a cassette's reels, an analyser and two VU needles)
+/// stay separate instead of repainting everything between them; rects that
+/// touch or nearly touch are merged, and many scattered changes fall back
+/// to one bounding rect.
+pub fn damage_rects(prev: &[ClippedShape], cur: &[ClippedShape], full: Rect) -> Vec<Rect> {
+    const MAX_RECTS: usize = 6;
+    const NEAR: f32 = 6.0;
     let same = |a: &ClippedShape, b: &ClippedShape| a.clip == b.clip && a.shape.same(&b.shape);
     let n = prev.len().min(cur.len());
     let mut lead = 0;
@@ -901,34 +908,55 @@ pub fn damage(prev: &[ClippedShape], cur: &[ClippedShape], full: Rect) -> Option
     }
     let pm = &prev[lead..prev.len() - tail];
     let cm = &cur[lead..cur.len() - tail];
-    let area = |c: &ClippedShape| c.shape.bounds().intersect(c.clip);
-    let mut d = Rect::NOTHING;
+    let area = |c: &ClippedShape| c.shape.bounds().intersect(c.clip).intersect(full);
+    let mut parts: Vec<Rect> = Vec::new();
+    let mut add = |r: Rect| {
+        if r.width() > 0.0 && r.height() > 0.0 {
+            parts.push(r);
+        }
+    };
     if pm.len() == cm.len() {
         for (a, b) in pm.iter().zip(cm.iter()) {
             if !same(a, b) {
-                d = d.union(area(a)).union(area(b));
+                add(area(a));
+                add(area(b));
             }
         }
     } else {
         for c in pm.iter().chain(cm.iter()) {
-            let r = area(c);
-            if r.width() > 0.0 && r.height() > 0.0 {
-                d = d.union(r);
-            }
+            add(area(c));
         }
     }
-    let d = d.intersect(full);
-    if d.width() <= 0.0 || d.height() <= 0.0 {
-        return None;
+    // Merge rects that overlap or nearly touch until none do.
+    let mut merged: Vec<Rect> = Vec::new();
+    for r in parts {
+        let mut r = r;
+        loop {
+            let hit = merged.iter().position(|m| m.expand(NEAR).intersects(r));
+            match hit {
+                Some(i) => r = r.union(merged.swap_remove(i)),
+                None => break,
+            }
+        }
+        merged.push(r);
     }
-    // Whole pixels.
-    Some(Rect::from_min_max(
-        pos2(d.min.x.floor().max(0.0), d.min.y.floor().max(0.0)),
-        pos2(
-            d.max.x.ceil().min(full.max.x),
-            d.max.y.ceil().min(full.max.y),
-        ),
-    ))
+    if merged.len() > MAX_RECTS {
+        let all = merged.iter().fold(Rect::NOTHING, |a, r| a.union(*r));
+        merged = vec![all];
+    }
+    merged
+        .into_iter()
+        .map(|d| {
+            Rect::from_min_max(
+                pos2(d.min.x.floor().max(0.0), d.min.y.floor().max(0.0)),
+                pos2(
+                    d.max.x.ceil().min(full.max.x),
+                    d.max.y.ceil().min(full.max.y),
+                ),
+            )
+        })
+        .filter(|d| d.width() > 0.0 && d.height() > 0.0)
+        .collect()
 }
 
 // ----------------------------------------------------------------- memory
@@ -1759,5 +1787,37 @@ impl Response {
         r.clicked |= other.clicked;
         r.changed |= other.changed;
         r
+    }
+}
+
+#[cfg(test)]
+mod damage_tests {
+    use super::*;
+
+    fn rect(x: f32, y: f32, w: f32) -> ClippedShape {
+        ClippedShape {
+            clip: Rect::EVERYTHING,
+            shape: Shape::Rect {
+                rect: Rect::from_min_size(pos2(x, y), vec2(w, 10.0)),
+                rounding: 0.0,
+                fill: Color32::WHITE,
+                stroke: Stroke::NONE,
+            },
+        }
+    }
+
+    #[test]
+    fn far_apart_changes_stay_separate_and_near_ones_merge() {
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        let frame = |xs: &[f32]| xs.iter().map(|x| rect(*x, 10.0, 20.0)).collect::<Vec<_>>();
+        let prev = frame(&[10.0, 300.0, 600.0]);
+        assert!(damage_rects(&prev, &frame(&[10.0, 300.0, 600.0]), full).is_empty());
+        let d = damage_rects(&prev, &frame(&[12.0, 300.0, 602.0]), full);
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert!(d.iter().all(|r| r.width() < 40.0));
+        // Neighbours merge into one rect.
+        let prev2 = frame(&[290.0, 300.0, 600.0]);
+        let near = frame(&[291.0, 301.0, 600.0]);
+        assert_eq!(damage_rects(&prev2, &near, full).len(), 1);
     }
 }

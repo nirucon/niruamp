@@ -2733,13 +2733,18 @@ impl NiruampApp {
         if self.toasts.is_empty() {
             return;
         }
+        // The windowshade strip is too small for a toast: only errors show.
+        let shade = self.prefs.window_shade && !self.immersive;
+        if shade && !self.toasts.iter().any(|t| t.error) {
+            return;
+        }
         let p = self.palette();
         let layer = LayerId::new(Order::Foreground, Id::new("niruamp-toasts"));
         let painter = ctx.layer_painter(layer);
         let screen = ctx.screen_rect();
         let width = (screen.width() * 0.72).min(self.s(520.0));
         let mut y = screen.bottom() - self.s(18.0);
-        for toast in self.toasts.iter().rev() {
+        for toast in self.toasts.iter().rev().filter(|t| !shade || t.error) {
             let age = now.duration_since(toast.created).as_secs_f32();
             let alpha = if age > 4.5 {
                 ((6.0 - age) / 1.5).clamp(0.0, 1.0)

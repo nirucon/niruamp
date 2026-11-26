@@ -302,30 +302,33 @@ impl NiruampApp {
             Tab::Settings => self.settings_ui(&mut child, ctx),
             Tab::About => self.about_ui(&mut child, ctx),
         }
-        let hint =
-            "SPACE play/pause · ←/→ seek · N/P track · +/- volume · / search · B browse · ESC back";
-        ui.painter().text(
-            footer.left_center(),
-            Align2::LEFT_CENTER,
-            hint,
-            FontId::proportional(s(8.0)),
-            p.disabled,
-        );
         let right = if let Some(b) = self.backend.as_ref() {
-            format!(
-                "NPLAY {} · protocol {} · r{}",
-                b.snapshot.backend.version, b.snapshot.protocol_version, self.revision
-            )
+            format!("NPLAY {}", b.snapshot.backend.version)
         } else {
             "NPLAY offline".to_string()
         };
-        ui.painter().text(
+        let right_rect = ui.painter().text(
             footer.right_center(),
             Align2::RIGHT_CENTER,
             right,
             FontId::proportional(s(8.0)),
             p.disabled,
         );
+        // The key hint never runs under the version in a narrow window.
+        let hint = "SPACE play/pause · ←/→ seek · N/P track · +/- volume · / search · \
+                    K skin · F11 full screen · ESC back";
+        ui.painter()
+            .with_clip_rect(Rect::from_min_max(
+                footer.min,
+                pos2(right_rect.left() - s(10.0), footer.max.y),
+            ))
+            .text(
+                footer.left_center(),
+                Align2::LEFT_CENTER,
+                hint,
+                FontId::proportional(s(8.0)),
+                p.muted,
+            );
     }
 
     fn panel_header(&mut self, ui: &mut Ui, ctx: &Context, rect: Rect) {
@@ -447,6 +450,7 @@ impl NiruampApp {
             ),
             play_label,
             &p,
+            !tracks.is_empty(),
         ) {
             if queue {
                 if !tracks.is_empty() {
@@ -458,20 +462,23 @@ impl NiruampApp {
             }
         }
         bx -= btn_w + s(3.0);
-        if small_button(
-            ui,
-            Rect::from_center_size(
-                pos2(bx + btn_w / 2.0, header.center().y),
-                vec2(btn_w, btn_h),
-            ),
-            "QUEUE",
-            &p,
-        ) {
+        // Queueing a queue row again from the queue itself only confused.
+        if !queue
+            && small_button(
+                ui,
+                Rect::from_center_size(
+                    pos2(bx + btn_w / 2.0, header.center().y),
+                    vec2(btn_w, btn_h),
+                ),
+                "QUEUE",
+                &p,
+                !tracks.is_empty(),
+            )
+        {
             if let Some(t) = tracks.get(selected) {
                 self.queue_add(t, false);
             }
         }
-        bx -= btn_w + s(3.0);
         if queue {
             if small_button(
                 ui,
@@ -481,6 +488,7 @@ impl NiruampApp {
                 ),
                 "SAVE",
                 &p,
+                !tracks.is_empty(),
             ) {
                 self.save_queue();
             }
@@ -493,6 +501,7 @@ impl NiruampApp {
                 ),
                 "CLEAR",
                 &p,
+                !tracks.is_empty(),
             ) {
                 self.clear_queue();
             }
@@ -505,6 +514,7 @@ impl NiruampApp {
                 ),
                 "REMOVE",
                 &p,
+                !tracks.is_empty(),
             ) && selected < tracks.len()
             {
                 self.remove_queue(selected);
@@ -696,13 +706,25 @@ impl NiruampApp {
     }
 }
 
-fn small_button(ui: &mut Ui, rect: Rect, label: &str, p: &crate::theme::Palette) -> bool {
+fn small_button(
+    ui: &mut Ui,
+    rect: Rect,
+    label: &str,
+    p: &crate::theme::Palette,
+    enabled: bool,
+) -> bool {
     let resp = ui.interact(
         rect,
         Id::new(("small-btn", label, rect.min.x as i32)),
-        Sense::click(),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
     );
-    let fill = if resp.is_pointer_button_down_on() {
+    let fill = if !enabled {
+        p.panel
+    } else if resp.is_pointer_button_down_on() {
         p.inset
     } else if resp.hovered() {
         p.surface_hi
@@ -715,11 +737,13 @@ fn small_button(ui: &mut Ui, rect: Rect, label: &str, p: &crate::theme::Palette)
         Align2::CENTER_CENTER,
         label,
         FontId::proportional(rect.height() * 0.48),
-        if resp.hovered() {
+        if !enabled {
+            p.disabled
+        } else if resp.hovered() {
             p.foreground
         } else {
             p.muted
         },
     );
-    resp.activated(ui)
+    enabled && resp.activated(ui)
 }

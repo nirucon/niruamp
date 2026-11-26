@@ -271,24 +271,13 @@ impl SkinArt {
         self.entries.len()
     }
 
-    /// A vertical gradient, stretched to any rect.
-    pub fn gradient(&mut self, ctx: &Context, top: Color32, bottom: Color32) -> TextureHandle {
-        self.get(ctx, ("gradient", top.0, bottom.0), || {
-            let h = 64;
-            let mut rgba = Vec::with_capacity(4 * h * 2);
-            for y in 0..h {
-                let c = mix(top, bottom, y as f32 / (h - 1) as f32);
-                for _ in 0..2 {
-                    rgba.extend_from_slice(&c.0);
-                }
-            }
-            ColorImage::from_rgba_unmultiplied([2, h], &rgba)
+    /// Brushed metal at `w` x `h` (drawn 1:1, the cheapest blit):
+    /// fine horizontal streaks, a soft sheen and grain.
+    pub fn brushed(&mut self, ctx: &Context, base: Color32, w: u32, h: u32) -> TextureHandle {
+        let (w, h) = (w.clamp(1, 4096), h.clamp(1, 1024));
+        self.get(ctx, ("brushed", base.0, w, h), || {
+            brushed_image(base, w as usize, h as usize)
         })
-    }
-
-    /// Brushed metal: fine horizontal streaks, a soft sheen and grain.
-    pub fn brushed(&mut self, ctx: &Context, base: Color32) -> TextureHandle {
-        self.get(ctx, ("brushed", base.0), || brushed_image(base, 640, 220))
     }
 
     /// CRT glass for a `w` x `h` screen: scanlines, vignette, a top sheen.
@@ -362,6 +351,29 @@ fn crt_image(w: u32, h: u32) -> ColorImage {
 
 // ----------------------------------------------------------------- drawing
 
+/// A vertical gradient as whole-pixel bands: as smooth as a stretched
+/// texture for these subtle ramps, and far cheaper to repaint.
+pub fn gradient_bands(painter: &Painter, rect: Rect, top: Color32, bottom: Color32) {
+    let y0 = rect.top().round();
+    let y1 = rect.bottom().round();
+    let x0 = rect.left().round();
+    let x1 = rect.right().round();
+    let h = (y1 - y0).max(1.0);
+    let bands = (h / 3.0).ceil().clamp(1.0, 48.0) as usize;
+    for k in 0..bands {
+        let a = (y0 + h * k as f32 / bands as f32).round();
+        let b = (y0 + h * (k + 1) as f32 / bands as f32).round();
+        if b > a {
+            let t = (k as f32 + 0.5) / bands as f32;
+            painter.rect_filled(
+                Rect::from_min_max(pos2(x0, a), pos2(x1, b)),
+                Rounding::ZERO,
+                mix(top, bottom, t),
+            );
+        }
+    }
+}
+
 /// Text with a soft phosphor halo.
 pub fn glow_text(
     painter: &Painter,
@@ -397,15 +409,7 @@ pub fn glow_segments(painter: &Painter, rect: Rect, text: &str, on: Color32, off
 
 /// An analogue VU meter: backlit face, scale, red zone and a needle at
 /// `level` (0..1, the spectrum's display scale; 0.8 is 0 VU).
-pub fn vu_meter(
-    painter: &Painter,
-    art: &mut SkinArt,
-    ctx: &Context,
-    rect: Rect,
-    level: f32,
-    label: &str,
-    p: &Palette,
-) {
+pub fn vu_meter(painter: &Painter, rect: Rect, level: f32, label: &str, p: &Palette) {
     let face_top = Color32::from_rgb(250, 236, 196);
     let face_bottom = Color32::from_rgb(226, 196, 132);
     let face_top = mix(face_top, p.accent, 0.10);
@@ -413,8 +417,7 @@ pub fn vu_meter(
     // Bezel.
     painter.rect_filled(rect, Rounding::same(3.0), Color32::from_rgb(20, 20, 22));
     let face = rect.shrink(2.5);
-    let tex = art.gradient(ctx, face_top, face_bottom);
-    painter.image(tex.id(), face, Rect::NOTHING, Color32::WHITE);
+    gradient_bands(painter, face, face_top, face_bottom);
     let ink = Color32::from_rgb(40, 34, 28);
     let red = Color32::from_rgb(196, 52, 40);
     let radius = (face.height() * 0.92).min(face.width() * 0.66);
@@ -727,8 +730,8 @@ mod tests {
     fn textures_are_cached() {
         let ctx = Context::new();
         let mut art = SkinArt::default();
-        let a = art.brushed(&ctx, Color32::from_rgb(170, 170, 170));
-        let b = art.brushed(&ctx, Color32::from_rgb(170, 170, 170));
+        let a = art.brushed(&ctx, Color32::from_rgb(170, 170, 170), 64, 32);
+        let b = art.brushed(&ctx, Color32::from_rgb(170, 170, 170), 64, 32);
         assert!(std::rc::Rc::ptr_eq(&a.id().0, &b.id().0));
         for i in 0..20 {
             art.crt(&ctx, 10 + i, 10);

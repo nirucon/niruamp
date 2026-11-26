@@ -89,6 +89,8 @@ pub struct Shell {
     screenshot: Option<std::path::PathBuf>,
     prev_shapes: Vec<gui::ClippedShape>,
     painted: bool,
+    /// `NIRUAMP_DEBUG_FPS`: repainted pixels and paint time since the last report.
+    debug_damage: Option<(Instant, u64, u32, std::time::Duration)>,
 }
 
 impl Shell {
@@ -120,6 +122,8 @@ impl Shell {
             screenshot: None,
             prev_shapes: Vec::new(),
             painted: false,
+            debug_damage: std::env::var_os("NIRUAMP_DEBUG_FPS")
+                .map(|_| (Instant::now(), 0, 0, std::time::Duration::ZERO)),
         }
     }
 
@@ -247,14 +251,15 @@ impl Shell {
             }
         }
         let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(w as f32, h as f32));
-        let region = if full_damage {
-            Some(full)
+        let regions = if full_damage {
+            vec![full]
         } else {
-            gui::damage(&self.prev_shapes, &shapes, full)
+            gui::damage_rects(&self.prev_shapes, &shapes, full)
         };
-        if let Some(region) = region {
+        let started = Instant::now();
+        for region in &regions {
             self.ctx
-                .fonts_mut(|f| self.raster.paint_region(&mut self.pm, f, &shapes, region));
+                .fonts_mut(|f| self.raster.paint_region(&mut self.pm, f, &shapes, *region));
             if self.mapped_once {
                 let r = (
                     region.min.x as u32,
@@ -265,6 +270,26 @@ impl Shell {
                 let _ = self.x.present(&self.pm, r);
             }
             self.painted = true;
+        }
+        if let Some((since, px, frames, spent)) = self.debug_damage.as_mut() {
+            *px += regions
+                .iter()
+                .map(|r| (r.width() * r.height()) as u64)
+                .sum::<u64>();
+            *frames += 1;
+            *spent += started.elapsed();
+            if since.elapsed() >= std::time::Duration::from_secs(5) {
+                eprintln!(
+                    "niruamp: repainted {} px/frame in {} rects, {:.2} ms/frame",
+                    *px / (*frames).max(1) as u64,
+                    regions.len(),
+                    spent.as_secs_f64() * 1000.0 / (*frames).max(1) as f64
+                );
+                *since = Instant::now();
+                *px = 0;
+                *frames = 0;
+                *spent = std::time::Duration::ZERO;
+            }
         }
         self.prev_shapes = shapes;
         if let Some(path) = self.screenshot.take() {

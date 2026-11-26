@@ -94,20 +94,23 @@ impl NiruampApp {
             Skin::Classic => {
                 let top = skin::mix(p.surface, p.surface_hi, 0.55);
                 let bottom = skin::mix(p.surface, p.background, 0.35);
-                let tex = self.skin_art.gradient(&ctx, top, bottom);
-                painter.image(tex.id(), panel, Rect::NOTHING, Color32::WHITE);
+                skin::gradient_bands(&painter, panel, top, bottom);
             }
             Skin::Phosphor => {
-                let top = p.surface_hi;
-                let bottom = p.surface;
-                let tex = self.skin_art.gradient(&ctx, top, bottom);
-                painter.image(tex.id(), panel, Rect::NOTHING, Color32::WHITE);
+                skin::gradient_bands(&painter, panel, p.surface_hi, p.surface);
             }
             Skin::HiFi => {
-                let tex = self
-                    .skin_art
-                    .brushed(&ctx, skin::metal(&self.theme.palette));
-                painter.image(tex.id(), panel, Rect::NOTHING, Color32::WHITE);
+                let plate = Rect::from_min_max(
+                    pos2(panel.left().round(), panel.top().round()),
+                    pos2(panel.right().round(), panel.bottom().round()),
+                );
+                let tex = self.skin_art.brushed(
+                    &ctx,
+                    skin::metal(&self.theme.palette),
+                    plate.width() as u32,
+                    plate.height() as u32,
+                );
+                painter.image(tex.id(), plate, Rect::NOTHING, Color32::WHITE);
             }
         }
         painter.rect_stroke(panel, r, Stroke::new(1.0_f32, p.border));
@@ -734,34 +737,45 @@ impl NiruampApp {
         let mid_top = inner.bottom() - inner.height() * 0.8;
         for i in 0..n {
             let v = bars.shown[i];
-            let x = inner.left() + i as f32 * (bw + gap);
-            let top = inner.bottom() - height(v).max(1.0);
-            let bar = Rect::from_min_max(pos2(x, top), pos2(x + bw, inner.bottom()));
+            // Whole pixels: crisp bars, and the rasterizer's fast path.
+            let x = (inner.left() + i as f32 * (bw + gap)).round();
+            let x1 = (inner.left() + i as f32 * (bw + gap) + bw)
+                .round()
+                .max(x + 1.0);
+            let bottom = inner.bottom().round();
+            let top = (bottom - height(v).max(1.0)).round();
+            let bar = Rect::from_min_max(pos2(x, top), pos2(x1, bottom));
             if phos {
                 painter.rect_filled(bar.expand2(vec2(1.0, 1.0)), 0.0, skin::alpha(p.vis, 0.18));
                 painter.rect_filled(bar, 0.0, p.vis);
             } else {
                 let zone = |from: f32, to: f32, color: Color32| {
                     let r = Rect::from_min_max(
-                        pos2(x, top.max(to)),
-                        pos2(x + bw, from.min(inner.bottom())),
+                        pos2(x, top.max(to.round())),
+                        pos2(x1, from.round().min(bottom)),
                     );
                     if r.height() > 0.0 {
                         painter.rect_filled(r, 0.0, color);
+                    } else {
+                        // A fixed shape count per frame keeps the damage
+                        // to the bars that moved (see gui::damage_rects).
+                        painter.add(crate::gui::Shape::Noop);
                     }
                 };
-                zone(inner.bottom(), low_top, skin::mix(p.led_dim, p.vis, 0.45));
+                zone(bottom, low_top, skin::mix(p.led_dim, p.vis, 0.45));
                 zone(low_top, mid_top, p.vis);
                 zone(mid_top, inner.top(), p.vis_peak);
             }
             let peak = bars.peaks[i];
             if peak > v + 0.015 {
-                let y = inner.bottom() - height(peak);
+                let y = (bottom - height(peak)).round();
                 painter.rect_filled(
-                    Rect::from_min_max(pos2(x, y - 1.5), pos2(x + bw, y + 0.5)),
+                    Rect::from_min_max(pos2(x, y - 2.0), pos2(x1, y)),
                     0.0,
                     if phos { p.accent } else { p.foreground },
                 );
+            } else {
+                painter.add(crate::gui::Shape::Noop);
             }
         }
     }
@@ -771,7 +785,6 @@ impl NiruampApp {
         let p = self.palette();
         let scale = self.prefs.scale;
         let s = move |v: f32| v * scale;
-        let ctx = ui.ctx().clone();
         let gap = s(8.0);
         let w = rect.width();
         let tape_w = (w * 0.37).clamp(s(150.0), s(250.0));
@@ -905,6 +918,8 @@ impl NiruampApp {
                     0.0,
                     on,
                 );
+            } else {
+                painter.add(crate::gui::Shape::Noop);
             }
             let peak_seg = (pk * segs as f32).round() as usize;
             if peak_seg > lit {
@@ -914,6 +929,8 @@ impl NiruampApp {
                     0.0,
                     p.vis_peak,
                 );
+            } else {
+                painter.add(crate::gui::Shape::Noop);
             }
         }
         // Segment gaps: glass-coloured lines across the analyser.
@@ -967,35 +984,11 @@ impl NiruampApp {
                 pos2(meters.right() - vu_w, meters.top()),
                 vec2(vu_w, meters.height()),
             );
-            skin::vu_meter(
-                &painter,
-                &mut self.skin_art,
-                &ctx,
-                left,
-                half(true),
-                "LOW",
-                &p,
-            );
-            skin::vu_meter(
-                &painter,
-                &mut self.skin_art,
-                &ctx,
-                right,
-                half(false),
-                "HIGH",
-                &p,
-            );
+            skin::vu_meter(&painter, left, half(true), "LOW", &p);
+            skin::vu_meter(&painter, right, half(false), "HIGH", &p);
         } else {
             let both = (half(true) + half(false)) * 0.5;
-            skin::vu_meter(
-                &painter,
-                &mut self.skin_art,
-                &ctx,
-                meters,
-                both,
-                "LEVEL",
-                &p,
-            );
+            skin::vu_meter(&painter, meters, both, "LEVEL", &p);
         }
     }
 
@@ -1313,7 +1306,7 @@ impl NiruampApp {
             .unwrap_or_else(|| "NIRUAMP".into());
         let title_rect = Rect::from_min_max(
             pos2(led_rect.right() + s(8.0), rect.top() + s(6.0)),
-            pos2(rect.right() - s(100.0), rect.bottom() - s(6.0)),
+            pos2(rect.right() - s(112.0), rect.bottom() - s(6.0)),
         );
         marquee(
             ui,
@@ -1329,9 +1322,17 @@ impl NiruampApp {
         let mut x = rect.right() - btn;
         for (icon, tip) in [
             (Icon::Close, "Close"),
-            (Icon::Down, "Unshade"),
-            (Icon::Play, "Play/Pause"),
-            (Icon::Next, "Next"),
+            (Icon::Down, "Unshade (W)"),
+            (Icon::Next, "Next (N)"),
+            (
+                if self.playback.is_playing() {
+                    Icon::Pause
+                } else {
+                    Icon::Play
+                },
+                "Play / pause (Space)",
+            ),
+            (Icon::Prev, "Previous (P)"),
         ] {
             let r = Rect::from_center_size(pos2(x - btn / 2.0, rect.center().y), vec2(btn, btn));
             let resp = icon_button_rect(
@@ -1348,8 +1349,9 @@ impl NiruampApp {
                 match icon {
                     Icon::Close => ctx.send_viewport_cmd(crate::gui::ViewportCommand::Close),
                     Icon::Down => self.toggle_shade(ctx),
-                    Icon::Play => self.toggle(),
+                    Icon::Play | Icon::Pause => self.toggle(),
                     Icon::Next => self.next(),
+                    Icon::Prev => self.previous(),
                     _ => {}
                 }
             }

@@ -787,9 +787,9 @@ impl NiruampApp {
                 "Rust graphical client · original artwork and vector controls.",
                 "NPLAY owns playback, queue, providers, library, statistics and MPRIS.",
                 "A versioned JSON-RPC service over a private Unix socket connects both UIs.",
-                "No bundled skins and no emulated .wsz compatibility in this release.",
+                "Three original skins (Classic, Phosphor, Hi-Fi Deck) in the theme's colours; no .wsz skins.",
                 "Equalizer is intentionally absent: NPLAY exposes no functional EQ DSP.",
-                "Visualization uses NPLAY's CAVA path and shows nothing synthetic when unavailable.",
+                "Visualization uses NPLAY's CAVA path, levelled for display, and shows nothing synthetic when unavailable.",
             ];
             for line in lines {
                 ui.label(
@@ -811,6 +811,11 @@ impl NiruampApp {
                 ("R / H", "Repeat / shuffle"),
                 ("/ or Ctrl+F", "Search"),
                 ("B", "Browse"),
+                ("V", "Visualizer on / off"),
+                ("K", "Next skin"),
+                ("W / T", "Windowshade / always on top"),
+                ("F11", "Fullscreen visual"),
+                ("1 … 5", "Playlist / queue / browse / settings / about"),
                 ("F", "Favorite current track"),
                 ("↑ / ↓", "Move selection"),
                 ("Alt+↑ / ↓", "Reorder queue"),

@@ -227,10 +227,21 @@ impl Raster {
                     }
                     let sx = rect.width() / tw;
                     let sy = rect.height() / th;
+                    // Bicubic only where it shows (artwork shrunk to a
+                    // thumbnail); 1:1 blits and stretched skin textures
+                    // (gradients, metal, CRT glass) repaint every spectrum
+                    // frame and look the same with cheaper filters.
+                    let quality = if (sx - 1.0).abs() < 0.01 && (sy - 1.0).abs() < 0.01 {
+                        tiny_skia::FilterQuality::Nearest
+                    } else if sx < 0.67 && sy < 0.67 {
+                        tiny_skia::FilterQuality::Bicubic
+                    } else {
+                        tiny_skia::FilterQuality::Bilinear
+                    };
                     let pattern = tiny_skia::Pattern::new(
                         texture.0.pixmap.as_ref(),
                         tiny_skia::SpreadMode::Pad,
-                        tiny_skia::FilterQuality::Bicubic,
+                        quality,
                         1.0,
                         Transform::from_row(sx, 0.0, 0.0, sy, rect.left(), rect.top()),
                     );

@@ -198,6 +198,8 @@ impl NiruampApp {
                     [bar.left_top(), bar.right_top()],
                     Stroke::new(1.0_f32, palette.accent),
                 );
+            } else {
+                painter.add(crate::gui::Shape::Noop);
             }
             // Peak cap: holds briefly above the bar, then falls.
             let cap_y = inner.bottom() - inner.height() * (0.03 + peak.clamp(0.0, 1.0) * 0.97);
@@ -207,6 +209,8 @@ impl NiruampApp {
                     0.0,
                     palette.vis_peak,
                 );
+            } else {
+                painter.add(crate::gui::Shape::Noop);
             }
         }
     }

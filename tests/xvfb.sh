@@ -187,7 +187,7 @@ echo "search ok"
 
 # Settings: "Show remaining time" is saved.
 k 4
-xdotool mousemove 270 367 click 1; sleep 0.6
+xdotool mousemove 230 390 click 1; sleep 0.6
 grep -q 'remaining_time = true' "$XDG_CONFIG_HOME/niruamp/config.toml" || fail "setting not saved"
 echo "settings ok"
 
@@ -211,7 +211,7 @@ xdotool mousemove 0 0; sleep 0.2
 xw=$(xwininfo -id "$W" | awk '/Absolute upper-left X:/ {print $4}')
 yw=$(xwininfo -id "$W" | awk '/Absolute upper-left Y:/ {print $4}')
 wd=$(xwininfo -id "$W" | awk '/Width:/ {print $2}')
-xdotool mousemove $((xw + wd - 41)) $((yw + 25)) click 1
+xdotool mousemove $((xw + wd - 24)) $((yw + 25)) click 1
 i=0; while kill -0 "$AMP" 2>/dev/null && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
 kill -0 "$AMP" 2>/dev/null && fail "close button did not quit"
 [ -f "$XDG_STATE_HOME/niruamp/window.toml" ] || fail "window state not saved"
